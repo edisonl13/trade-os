@@ -267,7 +267,7 @@ export default function OverviewPage() {
       <main className="ml-64 flex-1 px-10 py-10">
         <div className="page-container">
           {/* Broadcast Header */}
-          <motion.div 
+          <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center justify-between"
@@ -278,12 +278,9 @@ export default function OverviewPage() {
           </div>
           <div>
             <h1 className="text-3xl font-black heading-sports">
-                Trade History <span className="brand-gradient-text">Command Center</span>
+                Broadcast <span className="brand-gradient-text">Command Center</span>
               </h1>
-              <p className="label-sports mt-1">Upload once, then review performance and behavior across every recorded trade.</p>
-              <Link href="/import" className="inline-flex items-center gap-2 mt-4 rounded-full bg-white/5 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#06B6D4] hover:bg-white/10 transition">
-                <Plus className="h-5 w-5" /> Import Trade History
-              </Link>
+              <p className="label-sports mt-1">Synchronized performance intelligence and squad analytics.</p>
           </div>
         </div>
       </motion.div>
@@ -515,15 +512,15 @@ export default function OverviewPage() {
               <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors" />
               <div className="relative z-10 space-y-6">
                 <div className="h-20 w-20 mx-auto rounded-3xl bg-white/20 backdrop-blur-md flex items-center justify-center glow-primary">
-                  <Scan className="h-10 w-10 text-white" />
+                  <Plus className="h-10 w-10 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black heading-sports">Upload <span className="text-[#06B6D4]">History</span></h3>
-                  <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mt-2">CSV export, platform log, or broker history</p>
+                  <h3 className="text-2xl font-black heading-sports">Sync <span className="text-[#06B6D4]">Signal</span></h3>
+                  <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mt-2">Upload CSV Feed or AI Vision Screenshot</p>
                 </div>
                 <Link href="/import" className="block">
                   <Button variant="secondary" className="w-full bg-white text-indigo-600 font-black uppercase hover:bg-white/90">
-                    Import Trade History {'>'}
+                    Open Import Center {'>'}
                   </Button>
                 </Link>
               </div>

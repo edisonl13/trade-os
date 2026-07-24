@@ -220,11 +220,18 @@ export default function SettingsPage() {
 
   const saveRegionSettings = async () => {
     setRegionSaving(true);
-    const success = await saveTradingAccountData({ timezone: tzSetting });
-    if (success) {
-      toast.success("Region settings saved.");
+    try {
+      const [accSuccess, setSuccess] = await Promise.all([
+        saveTradingAccountData({ timezone: tzSetting }),
+        saveUserSettings()
+      ]);
+      
+      if (accSuccess && setSuccess) {
+        toast.success("Region and localization settings synchronized.");
+      }
+    } finally {
+      setRegionSaving(false);
     }
-    setRegionSaving(false);
   };
 
   if (status === "loading" || loading) {
