@@ -469,7 +469,7 @@ export default function OverviewPage() {
                   </div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 bg-white/5 p-1 rounded-lg">
-                  {['S','M','T','W','T','F','S'].map((d) => <div key={d} className="text-[7px] font-black p-1 text-center opacity-20">{d}</div>)}
+                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => <div key={d} className="text-[7px] font-black p-1 text-center opacity-20">{d[0]}</div>)}
                   {Array.from({ length: firstDayOfWeek }).map((_, i) => <div key={`empty-${i}`} />)}
                   {calendarDays.map((day) => {
                     const dateStr = `${calYear}-${String(calMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;

@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TRADE//OS
+
+**Trading Intelligence Journal** — Import, analyze, and improve your trading performance.
+
+Screenshot-first trading journal with AI-powered trade extraction from screenshots and CSV batch import. Automatic performance analytics with a FIFA sports-broadcast-inspired UI.
+
+## Features
+
+- **CSV/Excel Batch Import** — Upload broker exports with auto field mapping and duplicate detection
+- **Screenshot AI Import** — Paste or upload trade screenshots, AI extracts trade data automatically (powered by DeepSeek)
+- **Performance Dashboard** — KPI cards, equity curve, directional bias, session heatmap, monthly calendar
+- **Deep Analytics** — Performance, risk, and behavior analysis with interactive charts
+- **Trade Journal** — Full CRUD with search, pagination, and bulk operations
+- **Performance Calendar** — Day-by-day P&L visualization with monthly summaries
+- **Multi-Account Support** — Track multiple brokerage accounts
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 16 (App Router) |
+| Styling | Tailwind CSS v4 + shadcn/ui |
+| Animation | Framer Motion |
+| Charts | Recharts |
+| Database | Turso (serverless SQLite) via Drizzle ORM |
+| Auth | NextAuth.js v5 |
+| AI | DeepSeek Vision API |
+| CSV | PapaParse |
+| Deployment | Vercel |
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+# Install dependencies
+npm install
+
+# Set up local environment
+cp .env.local.example .env.local
+# Edit .env.local with your values
+
+# Run database migration (local SQLite)
+npm run db:push
+
+# Start development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Database connection string |
+| `AUTH_SECRET` | NextAuth encryption secret |
+| `AUTH_URL` | Application URL |
+| `DEEPSEEK_API_KEY` | DeepSeek API key for screenshot AI extraction |
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Start development server |
+| `npm run build` | Production build |
+| `npm run start` | Start production server |
+| `npm run db:push` | Push schema to database |
+| `npm run db:generate` | Generate migration files |
+| `npm run db:studio` | Open Drizzle Studio |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Deployed on Vercel. Push to `main` branch to trigger automatic deployment.
 
-## Deploy on Vercel
+## License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Private — All rights reserved.

@@ -388,6 +388,7 @@ function ScreenshotImportTab() {
 export default function ImportPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const [activeTab, setActiveTab] = useState("screenshot");
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
@@ -397,7 +398,7 @@ export default function ImportPage() {
 
   return (
     <div className="page-container">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
@@ -405,7 +406,7 @@ export default function ImportPage() {
         <h1 className="text-3xl font-black heading-sports">Import <span className="brand-gradient-text">Center</span></h1>
       </motion.div>
 
-      <Tabs defaultValue="screenshot" className="w-full">
+      <Tabs defaultValue="screenshot" value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="mb-10 bg-white/5 p-1.5 h-auto rounded-2xl border border-white/5 gap-2">
            <TabsTrigger value="screenshot" className="rounded-xl px-10 py-4 text-[11px] font-black uppercase tracking-widest data-[state=active]:bg-[#3B82F6] data-[state=active]:text-white transition-all gap-3">
               <Camera className="h-4 w-4" /> Optical Analysis
@@ -416,16 +417,16 @@ export default function ImportPage() {
         </TabsList>
 
         <AnimatePresence mode="wait">
-          <TabsContent value="screenshot">
-            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+          {activeTab === "screenshot" && (
+            <motion.div key="screenshot" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
               <ScreenshotImportTab />
             </motion.div>
-          </TabsContent>
-          <TabsContent value="csv">
-            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+          )}
+          {activeTab === "csv" && (
+            <motion.div key="csv" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
               <CsvImportTab router={router} />
             </motion.div>
-          </TabsContent>
+          )}
         </AnimatePresence>
       </Tabs>
     </div>
