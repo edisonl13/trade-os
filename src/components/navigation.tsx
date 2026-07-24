@@ -55,18 +55,15 @@ export function Navigation() {
           <h1 className="text-xl font-black tracking-tighter text-white uppercase leading-none">
             TRADE<span className="text-[#2563EB]">//</span>OS
           </h1>
-          <div className="flex items-center gap-1.5 mt-1">
-             <div className="h-1 w-1 rounded-full bg-[#2563EB] animate-pulse" />
-             <p className="text-[8px] font-black uppercase tracking-[0.25em] text-muted-foreground/50 leading-none">
-               Broadcast Active
-             </p>
-          </div>
+          <p className="text-[9px] font-black uppercase tracking-[0.35em] text-[#A5B4FC] mt-1">
+            Sidebar Navigation
+          </p>
         </div>
       </div>
 
       {/* Navigation Links */}
       <nav className="flex-1 space-y-1.5 px-4 py-10 relative">
-        <div className="label-sports px-4 mb-4 opacity-30 text-[8px]">Main Dashboard</div>
+        <div className="label-sports px-4 mb-4 opacity-30 text-[8px]">Navigation</div>
         {navItems.map((item, idx) => {
           const isActive = pathname === item.href;
           const Icon = item.icon;

@@ -23,8 +23,9 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import Link from "next/link";
+import { Navigation } from "@/components/navigation";
 import {
   AreaChart,
   Area,
@@ -250,9 +251,12 @@ export default function OverviewPage() {
   const calendarDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
   return (
-    <div className="page-container">
-      {/* Broadcast Header */}
-      <motion.div 
+    <div className="flex min-h-screen bg-background">
+      <Navigation />
+      <main className="ml-64 flex-1 px-10 py-10">
+        <div className="page-container">
+          {/* Broadcast Header */}
+          <motion.div 
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center justify-between"
@@ -263,18 +267,13 @@ export default function OverviewPage() {
           </div>
           <div>
             <h1 className="text-3xl font-black heading-sports">
-              Performance <span className="brand-gradient-text">Command Center</span>
-            </h1>
-            <p className="label-sports mt-1">Season 2026 &middot; Live Data Feed</p>
+                Trade History <span className="brand-gradient-text">Command Center</span>
+              </h1>
+              <p className="label-sports mt-1">Upload once, then review performance and behavior across every recorded trade.</p>
+              <Link href="/import" className="inline-flex items-center gap-2 mt-4 rounded-full bg-white/5 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#06B6D4] hover:bg-white/10 transition">
+                <Plus className="h-5 w-5" /> Import Trade History
+              </Link>
           </div>
-        </div>
-        
-        <div className="hidden md:flex items-center gap-3">
-          <Link href="/import">
-            <Button size="lg" className="brand-gradient text-white font-black uppercase glow-primary gap-2">
-              <Plus className="h-5 w-5" /> Import Feed
-            </Button>
-          </Link>
         </div>
       </motion.div>
 
@@ -292,12 +291,12 @@ export default function OverviewPage() {
             <TrendingUp className="h-12 w-12 text-[#2563EB]" />
           </div>
           <div className="max-w-md space-y-4">
-            <h2 className="text-4xl font-black heading-sports">Awaiting <span className="text-[#06B6D4]">Kickoff</span></h2>
-            <p className="text-muted-foreground font-medium">Your intelligence journal is empty. Sync your broker data or upload trade screenshots to start the broadcast.</p>
+            <h2 className="text-4xl font-black heading-sports">Awaiting <span className="text-[#06B6D4]">Upload</span></h2>
+            <p className="text-muted-foreground font-medium">Your review workspace is empty. Upload your trade history or log file to start analyzing behavior and performance.</p>
           </div>
           <Link href="/import">
             <Button size="lg" className="brand-gradient text-white px-10 py-7 text-lg font-black uppercase glow-primary gap-3">
-              <Plus className="h-6 w-6" /> Sync First Data
+              <Plus className="h-6 w-6" /> Import Trade History
             </Button>
           </Link>
         </motion.div>
@@ -315,7 +314,7 @@ export default function OverviewPage() {
                 <div className="absolute top-0 right-0 p-4 opacity-10">
                   <Activity className="h-20 w-20 text-[#2563EB]" />
                 </div>
-                <span className="label-sports mb-2">Total Season P&L</span>
+                <span className="label-sports mb-2">Historical Performance</span>
                 <div className="flex items-baseline gap-2">
                   <span className={cn(
                     "text-6xl font-black heading-sports tracking-tighter font-data",
@@ -331,7 +330,7 @@ export default function OverviewPage() {
                   </div>
                   <div className="w-px h-8 bg-white/5" />
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">Active</span>
+                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">Open Positions</span>
                     <span className="text-lg font-black heading-sports text-[#06B6D4] font-data">{kpi?.openTrades}</span>
                   </div>
                 </div>
@@ -346,7 +345,7 @@ export default function OverviewPage() {
                   <span className="label-sports">Equity Curve</span>
                   <div className="flex gap-2">
                     <div className="h-1.5 w-1.5 rounded-full bg-[#2563EB] animate-pulse" />
-                    <span className="text-[8px] font-black uppercase tracking-widest text-[#2563EB]">Live Chart</span>
+                    <span className="text-[8px] font-black uppercase tracking-widest text-[#2563EB]">Equity Trend</span>
                   </div>
                 </div>
                 <div className="h-32">
@@ -363,8 +362,8 @@ export default function OverviewPage() {
                   </ResponsiveContainer>
                 </div>
                 <div className="mt-4 flex justify-between items-center text-[10px] font-bold uppercase text-muted-foreground/40">
-                  <span>Start Season</span>
-                  <span>Present Day</span>
+                  <span>Earliest Record</span>
+                  <span>Latest Record</span>
                 </div>
               </motion.div>
             </div>
@@ -383,19 +382,19 @@ export default function OverviewPage() {
               {/* Long vs Short Broadcast */}
               <div className="fifa-card p-6 space-y-6">
                 <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">Squad Balance</h3>
+                  <h3 className="heading-sports text-sm">Trade Direction Bias</h3>
                   <Filter className="h-3 w-3 text-muted-foreground/30" />
                 </div>
                 <div className="flex justify-between items-center px-2">
                   <div className="text-center">
-                    <span className="label-sports text-[#2563EB]">Longs</span>
+                    <span className="label-sports text-[#2563EB]">Long Trades</span>
                     <p className="text-xl font-black heading-sports mt-1 font-data">{formatUSD(longTotalPnL)}</p>
                   </div>
                   <div className="h-10 w-10 rounded-full border border-white/5 flex items-center justify-center">
                     <span className="text-[10px] font-black opacity-20">VS</span>
                   </div>
                   <div className="text-center">
-                    <span className="label-sports text-[#EC4899]">Shorts</span>
+                    <span className="label-sports text-[#EC4899]">Short Trades</span>
                     <p className="text-xl font-black heading-sports mt-1 font-data">{formatUSD(shortTotalPnL)}</p>
                   </div>
                 </div>
@@ -426,17 +425,17 @@ export default function OverviewPage() {
               {/* Training Heatmap */}
               <div className="fifa-card p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">Session Intensity</h3>
-                  <Badge variant="outline" className="text-[8px] font-black uppercase border-white/5 bg-white/5">H &times; W</Badge>
+                  <h3 className="heading-sports text-sm">Trade Density</h3>
+                  <Badge variant="outline" className="text-xs font-black uppercase border-white/5 bg-white/5">H &times; W</Badge>
                 </div>
                 <div className="grid grid-cols-8 gap-1.5">
                   <div />
                   {DAY_LABELS.map((d) => (
-                    <div key={d} className="text-[7px] font-black text-muted-foreground/30 text-center uppercase">{d[0]}</div>
+                    <div key={d} className="text-[9px] font-black text-muted-foreground/30 text-center uppercase">{d[0]}</div>
                   ))}
                   {Array.from({ length: 8 }).map((_, r) => (
                     <div key={`row-${r}`} className="contents">
-                      <div className="text-[7px] font-black text-muted-foreground/20 py-0.5">{String(r * 3).padStart(2, '0')}</div>
+                      <div className="text-[9px] font-black text-muted-foreground/20 py-0.5">{String(r * 3).padStart(2, '0')}</div>
                       {Array.from({ length: 7 }).map((_, c) => {
                         const val = heatmapValue(r * 3, c);
                         return (
@@ -454,29 +453,29 @@ export default function OverviewPage() {
                   ))}
                 </div>
                 <div className="flex items-center justify-center gap-4 pt-2 border-t border-white/5">
-                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#EF4444]" /><span className="text-[7px] font-black uppercase text-muted-foreground/40">Loss Zone</span></div>
-                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#22C55E]" /><span className="text-[7px] font-black uppercase text-muted-foreground/40">Profit Zone</span></div>
+                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#EF4444]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">Loss Zone</span></div>
+                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#22C55E]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">Profit Zone</span></div>
                 </div>
               </div>
 
               {/* Match Calendar */}
               <div className="fifa-card p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">Monthly Schedule</h3>
+                  <h3 className="heading-sports text-sm">Monthly Trade Calendar</h3>
                   <div className="flex gap-2">
                     <button onClick={() => { setCalMonth(m => m === 1 ? 12 : m - 1); if (calMonth === 1) setCalYear(y => y - 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronLeft className="h-3 w-3" /></button>
                     <button onClick={() => { setCalMonth(m => m === 12 ? 1 : m + 1); if (calMonth === 12) setCalYear(y => y + 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronRight className="h-3 w-3" /></button>
                   </div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 bg-white/5 p-1 rounded-lg">
-                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => <div key={d} className="text-[7px] font-black p-1 text-center opacity-20">{d[0]}</div>)}
+                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => <div key={d} className="text-[9px] font-black p-1 text-center opacity-20">{d[0]}</div>)}
                   {Array.from({ length: firstDayOfWeek }).map((_, i) => <div key={`empty-${i}`} />)}
                   {calendarDays.map((day) => {
                     const dateStr = `${calYear}-${String(calMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
                     const dayData = calendar.find((d) => d.date === dateStr);
                     return (
                       <div key={day} className={cn(
-                        "aspect-square rounded-[2px] flex items-center justify-center text-[7px] font-black",
+                        "aspect-square rounded-[2px] flex items-center justify-center text-[9px] font-black",
                         dayData ? (dayData.pnl >= 0 ? "bg-[#22C55E]/10 text-[#22C55E]" : "bg-[#EF4444]/10 text-[#EF4444]") : "text-white/10"
                       )}>
                         {day}
@@ -508,12 +507,12 @@ export default function OverviewPage() {
                   <Scan className="h-10 w-10 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black heading-sports">Instant <span className="text-[#06B6D4]">Import</span></h3>
-                  <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mt-2">CSV Feed &bull; AI Vision &bull; API Sync</p>
+                  <h3 className="text-2xl font-black heading-sports">Upload <span className="text-[#06B6D4]">History</span></h3>
+                  <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mt-2">CSV export, platform log, or broker history</p>
                 </div>
                 <Link href="/import" className="block">
                   <Button variant="secondary" className="w-full bg-white text-indigo-600 font-black uppercase hover:bg-white/90">
-                    Enter Dashboard {'>'}
+                    Import Trade History {'>'}
                   </Button>
                 </Link>
               </div>
@@ -521,7 +520,7 @@ export default function OverviewPage() {
 
             {/* Performance Highlights */}
             <div className="fifa-card p-6 space-y-6">
-              <h3 className="heading-sports text-sm">Season Highlights</h3>
+              <h3 className="heading-sports text-sm">Analysis Highlights</h3>
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-white/5 rounded-xl p-4 border border-white/5">
@@ -565,18 +564,20 @@ export default function OverviewPage() {
               </div>
               <h3 className="heading-sports text-sm flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-[#06B6D4] shadow-[0_0_8px_#06B6D4]" />
-                AI Strategy Review
+                Behavior Snapshot
               </h3>
               <p className="text-[10px] font-medium text-muted-foreground/60 mt-3 leading-relaxed">
-                Based on your last {kpi?.closedTrades} trades, you perform 24% better during the London Open. Strategy "Trend-Follow" has the highest R:R efficiency.
+                Based on your last {kpi?.closedTrades} trades, this summary surfaces your timing bias, win/loss distribution, and most consistent trade patterns.
               </p>
               <Button variant="link" className="text-[10px] font-black uppercase text-[#06B6D4] p-0 h-auto mt-4 hover:no-underline hover:text-[#06B6D4]/80">
-                Generate Full Weekly Report {'>'}
+                Open Behavior Insights {'>'}
               </Button>
             </div>
           </div>
         </div>
       )}
+        </div>
+      </main>
     </div>
   );
 }

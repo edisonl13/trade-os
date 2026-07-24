@@ -13,6 +13,19 @@ export const users = sqliteTable("user", {
   image: text("image"),
 });
 
+/**
+ * Per-user settings stored separately from the auth user record.
+ */
+export const userSettings = sqliteTable("user_settings", {
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  locale: text("locale").default("en-US"),
+  billingEmail: text("billingEmail"),
+  subscriptionPlan: text("subscriptionPlan").default("Free"),
+  twoFactorEnabled: integer("twoFactorEnabled").default(0),
+  createdAt: integer("createdAt", { mode: "number" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "number" }).notNull(),
+});
+
 export const accounts = sqliteTable(
   "account",
   {

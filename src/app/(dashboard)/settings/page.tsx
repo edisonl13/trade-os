@@ -23,7 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 /* ──────────────────────────────
@@ -45,6 +45,8 @@ export default function SettingsPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [regionSaving, setRegionSaving] = useState(false);
 
   // Profile info
   const [displayName, setDisplayName] = useState("");
@@ -60,8 +62,14 @@ export default function SettingsPage() {
   // Language & Region
   const [language, setLanguage] = useState("English");
   const [tzSetting, setTzSetting] = useState("UTC");
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [billingEmail, setBillingEmail] = useState("");
+  const [subscriptionPlan, setSubscriptionPlan] = useState("Free");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
   const [accountLoaded, setAccountLoaded] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("profile");
 
   /* ──────────────────────────────
      Fetch current settings
@@ -70,26 +78,144 @@ export default function SettingsPage() {
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
     if (status === "authenticated") {
-      fetch("/api/trading-account")
-        .then((res) => res.ok ? res.json() : null)
-        .then((data: TradingAccount | null) => {
-          if (data) {
-            setAccountId(data.id);
-            setAccountLabel(data.label);
-            setBroker(data.broker ?? "");
-            setCurrency(data.currency);
-            setInitialBalance(String(data.initialBalance));
-            setTimezone(data.timezone);
-            setTzSetting(data.timezone);
+      Promise.all([
+        fetch("/api/trading-account").then((res) => res.ok ? res.json() : null),
+        fetch("/api/settings").then((res) => res.ok ? res.json() : null),
+      ])
+        .then(([accountData, settingsData]) => {
+          if (accountData) {
+            setAccountId(accountData.id);
+            setAccountLabel(accountData.label);
+            setBroker(accountData.broker ?? "");
+            setCurrency(accountData.currency);
+            setInitialBalance(String(accountData.initialBalance));
+            setTimezone(accountData.timezone);
+            setTzSetting(accountData.timezone);
           }
+
+          if (settingsData) {
+            if (settingsData.locale) setLanguage(settingsData.locale);
+            if (settingsData.billingEmail) setBillingEmail(settingsData.billingEmail);
+            if (settingsData.subscriptionPlan) setSubscriptionPlan(settingsData.subscriptionPlan);
+            setTwoFactorEnabled(Boolean(settingsData.twoFactorEnabled));
+          }
+
           setAccountLoaded(true);
+          setSettingsLoaded(true);
         })
-        .catch(() => setAccountLoaded(true));
+        .catch(() => {
+          setAccountLoaded(true);
+          setSettingsLoaded(true);
+        });
 
       if (session?.user?.name) setDisplayName(session.user.name);
       setLoading(false);
     }
   }, [status, router, session]);
+
+  const buildAccountPayload = (override?: { timezone?: string }) => ({
+    id: accountId,
+    label: accountLabel,
+    broker,
+    currency,
+    initialBalance: parseFloat(initialBalance) || 0,
+    timezone: override?.timezone ?? timezone,
+  });
+
+  const saveTradingAccountData = async (override?: { timezone?: string }) => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/trading-account", {
+        method: accountId ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildAccountPayload(override)),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setAccountId(data.id);
+        if (override?.timezone) setTimezone(override.timezone);
+        toast.success("Squad account updated successfully");
+        return true;
+      }
+
+      toast.error(data.error ?? "Update failed");
+      return false;
+    } catch {
+      toast.error("Network error");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveProfile = async () => {
+    if (!displayName.trim()) {
+      toast.error("Please enter a valid display name.");
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: displayName.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success("Profile saved successfully");
+        router.refresh();
+      } else {
+        toast.error(data.error ?? "Failed to save profile");
+      }
+    } catch {
+      toast.error("Network error");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const saveUserSettings = async () => {
+    setSettingsSaving(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locale: language,
+          billingEmail: billingEmail.trim(),
+          subscriptionPlan,
+          twoFactorEnabled,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success("Settings updated successfully");
+        return true;
+      }
+      toast.error(data.error ?? "Failed to save settings");
+      return false;
+    } catch {
+      toast.error("Network error");
+      return false;
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const handleResetProfile = () => {
+    setDisplayName(session?.user?.name ?? "");
+  };
+
+  const saveRegionSettings = async () => {
+    setRegionSaving(true);
+    const success = await saveTradingAccountData({ timezone: tzSetting });
+    if (success) {
+      toast.success("Region settings saved.");
+    }
+    setRegionSaving(false);
+  };
 
   if (status === "loading" || loading) {
     return (
@@ -98,40 +224,6 @@ export default function SettingsPage() {
       </div>
     );
   }
-
-  /* ──────────────────────────────
-     Handlers
-     ────────────────────────────── */
-
-  const saveTradingAccount = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch("/api/trading-account", {
-        method: accountId ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: accountId,
-          label: accountLabel,
-          broker,
-          currency,
-          initialBalance: parseFloat(initialBalance) || 0,
-          timezone,
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setAccountId(data.id);
-        toast.success("Squad account updated successfully");
-      } else {
-        toast.error(data.error ?? "Update failed");
-      }
-    } catch {
-      toast.error("Network error");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   return (
     <div className="page-container">
@@ -143,7 +235,7 @@ export default function SettingsPage() {
         <h1 className="text-3xl font-black heading-sports">Broadcast <span className="brand-gradient-text">Settings</span></h1>
       </motion.div>
 
-      <Tabs defaultValue="profile" className="w-full">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value)} className="w-full">
         <TabsList className="mb-8 bg-white/5 p-1.5 h-auto rounded-2xl border border-white/5 gap-2 overflow-x-auto justify-start">
           {[
             { id: "profile", label: "Profile", icon: User },
@@ -163,9 +255,9 @@ export default function SettingsPage() {
           ))}
         </TabsList>
 
-        <AnimatePresence mode="wait">
+        
           {/* PROFILE */}
-          <TabsContent value="profile">
+          <TabsContent key="profile" value="profile">
             <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-6">
@@ -205,8 +297,10 @@ export default function SettingsPage() {
                     </div>
 
                     <div className="flex justify-end gap-3">
-                       <Button variant="ghost" className="text-[10px] font-black uppercase text-muted-foreground">Reset</Button>
-                       <Button className="brand-gradient text-white px-8 font-black uppercase glow-primary">Save Profile</Button>
+                       <Button variant="ghost" className="text-[10px] font-black uppercase text-muted-foreground" onClick={handleResetProfile}>Reset</Button>
+                       <Button className="brand-gradient text-white px-8 font-black uppercase glow-primary" onClick={saveProfile} disabled={profileSaving}>
+                         {profileSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Save Profile"}
+                       </Button>
                     </div>
                   </div>
                 </div>
@@ -236,7 +330,7 @@ export default function SettingsPage() {
           </TabsContent>
 
           {/* TRADING ACCOUNT */}
-          <TabsContent value="trading-account">
+          <TabsContent key="trading-account" value="trading-account">
             <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
               <div className="max-w-3xl space-y-6">
                 <div className="fifa-card p-8">
@@ -288,7 +382,7 @@ export default function SettingsPage() {
                           </div>
                           <Button 
                             className="brand-gradient text-white px-10 h-12 font-black uppercase glow-primary gap-2"
-                            onClick={saveTradingAccount}
+                            onClick={() => saveTradingAccountData()}
                             disabled={saving}
                           >
                             {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Synchronizing...</> : <><CheckCircle2 className="h-4 w-4" /> Apply Changes</>}
@@ -302,7 +396,7 @@ export default function SettingsPage() {
           </TabsContent>
 
           {/* LANGUAGE & REGION */}
-          <TabsContent value="language">
+          <TabsContent key="language" value="language">
             <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
               <div className="max-w-3xl fifa-card p-8 space-y-8">
                  <div className="flex items-center gap-4">
@@ -315,22 +409,106 @@ export default function SettingsPage() {
                     </div>
                  </div>
 
-                 <div className="space-y-6">
+                  <div className="space-y-6">
                     <div className="space-y-2">
-                       <Label className="label-sports ml-1">Broadcast Language</Label>
-                       <div className="h-12 w-full flex items-center px-4 bg-white/2 border border-white/5 rounded-xl text-sm font-bold text-white/40">English (United Kingdom) &mdash; Locked</div>
+                      <Label className="label-sports ml-1">Broadcast Language</Label>
+                      <select
+                       value={language}
+                       onChange={(e) => setLanguage(e.target.value)}
+                       className="h-12 w-full rounded-xl border border-white/5 bg-white/5 px-4 text-sm font-bold text-white"
+                      >
+                       <option value="English">English</option>
+                       <option value="English (UK)">English (UK)</option>
+                       <option value="简体中文">简体中文</option>
+                       <option value="繁體中文">繁體中文</option>
+                       <option value="日本語">日本語</option>
+                      </select>
                     </div>
                     <div className="space-y-2">
-                       <Label className="label-sports ml-1">Display Timezone</Label>
-                       <Input value={tzSetting} onChange={(e) => setTzSetting(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold" />
+                      <Label className="label-sports ml-1">Display Timezone</Label>
+                      <Input value={tzSetting} onChange={(e) => setTzSetting(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold" />
                     </div>
-                 </div>
+                  </div>
 
-                 <Button className="brand-gradient text-white font-black uppercase glow-primary">Update Region Settings</Button>
+                  <Button className="brand-gradient text-white font-black uppercase glow-primary" onClick={saveRegionSettings} disabled={regionSaving}>
+                   {regionSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Update Region Settings"}
+                  </Button>
               </div>
             </motion.div>
           </TabsContent>
-        </AnimatePresence>
+
+          {/* SECURITY */}
+          <TabsContent key="security" value="security">
+            <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
+              <div className="max-w-3xl fifa-card p-8 space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-xl bg-[#EF4444]/10 flex items-center justify-center">
+                    <Shield className="h-6 w-6 text-[#EF4444]" />
+                  </div>
+                  <div>
+                    <h3 className="heading-sports text-lg">Security & Two-Factor</h3>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">Add extra protection to your account</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-black">Two-Factor Authentication</p>
+                      <p className="text-[10px] text-muted-foreground/50">Enable TOTP-based 2FA for your account.</p>
+                    </div>
+                    <label className="switch">
+                      <input type="checkbox" checked={twoFactorEnabled} onChange={(e) => setTwoFactorEnabled(e.target.checked)} />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button className="brand-gradient text-white font-black uppercase" onClick={saveUserSettings} disabled={settingsSaving}>
+                    {settingsSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Save Security"}
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </TabsContent>
+
+          {/* BILLING / SUBSCRIPTION */}
+          <TabsContent key="billing" value="billing">
+            <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
+              <div className="max-w-3xl fifa-card p-8 space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-xl bg-[#8B5CF6]/10 flex items-center justify-center">
+                    <CreditCard className="h-6 w-6 text-[#8B5CF6]" />
+                  </div>
+                  <div>
+                    <h3 className="heading-sports text-lg">Subscription & Billing</h3>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">Manage your billing contact and plan</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="label-sports ml-1">Billing Email</Label>
+                    <Input value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="label-sports ml-1">Subscription Plan</Label>
+                    <select value={subscriptionPlan} onChange={(e) => setSubscriptionPlan(e.target.value)} className="h-12 w-full rounded-xl border border-white/5 bg-white/5 px-4 text-sm font-bold text-white">
+                      <option value="Free">Free</option>
+                      <option value="Pro">Pro</option>
+                      <option value="Enterprise">Enterprise</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button className="brand-gradient text-white font-black uppercase" onClick={saveUserSettings} disabled={settingsSaving}>
+                    {settingsSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Save Billing"}
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </TabsContent>
       </Tabs>
     </div>
   );
