@@ -78,6 +78,7 @@ export const tradingAccounts = sqliteTable("trading_account", {
   broker: text("broker").default(""),
   currency: text("currency").notNull().default("USD"),
   initialBalance: real("initialBalance").notNull().default(0),
+  monthlyProfitTarget: real("monthlyProfitTarget").default(0),
   timezone: text("timezone").notNull().default("UTC"),
   createdAt: integer("createdAt", { mode: "number" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "number" }).notNull(),

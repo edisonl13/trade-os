@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
       broker: body.broker ?? "",
       currency: body.currency ?? "USD",
       initialBalance: body.initialBalance ?? 0,
+      monthlyProfitTarget: body.monthlyProfitTarget ?? 0,
       timezone: body.timezone ?? "UTC",
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -101,6 +102,7 @@ export async function PUT(request: NextRequest) {
         broker: body.broker ?? "",
         currency: body.currency ?? "USD",
         initialBalance: body.initialBalance ?? 0,
+        monthlyProfitTarget: body.monthlyProfitTarget ?? 0,
         timezone: body.timezone ?? "UTC",
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -124,6 +126,10 @@ export async function PUT(request: NextRequest) {
           body.initialBalance !== undefined
             ? body.initialBalance
             : account.initialBalance,
+        monthlyProfitTarget:
+          body.monthlyProfitTarget !== undefined
+            ? body.monthlyProfitTarget
+            : account.monthlyProfitTarget,
         timezone: body.timezone ?? account.timezone,
         updatedAt: Date.now(),
       })

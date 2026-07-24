@@ -47,15 +47,22 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
   const [calendarData, setCalendarData] = useState<CalendarDay[]>([]);
+  const [profitTarget, setProfitTarget] = useState<number>(0);
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
 
   const fetchCalendar = useCallback(async (y: number, m: number) => {
     setDataLoading(true);
     try {
-      const res = await fetch(`/api/analytics?type=calendar&year=${y}&month=${m}`);
-      if (res.ok) {
-        setCalendarData(await res.json());
+      const [calRes, accRes] = await Promise.all([
+        fetch(`/api/analytics?type=calendar&year=${y}&month=${m}`),
+        fetch("/api/trading-account")
+      ]);
+
+      if (calRes.ok) setCalendarData(await calRes.json());
+      if (accRes.ok) {
+        const acc = await accRes.json();
+        setProfitTarget(acc?.monthlyProfitTarget ?? 0);
       }
     } catch {
     } finally {
@@ -88,6 +95,10 @@ export default function CalendarPage() {
   const monthWins = calendarData.reduce((sum, d) => sum + d.wins, 0);
   const monthLosses = calendarData.reduce((sum, d) => sum + d.losses, 0);
   const monthWinRate = monthTrades > 0 ? (monthWins / monthTrades) * 100 : 0;
+
+  const targetAccuracy = profitTarget > 0
+    ? Math.max(0, Math.min(100, Math.round((monthPnL / profitTarget) * 100)))
+    : 0;
 
   const navMonth = (delta: number) => {
     let nm = month + delta;
@@ -224,17 +235,23 @@ export default function CalendarPage() {
               <div className="mt-6 space-y-4">
                  <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">
                     <span>Performance vs Goal</span>
-                    <span>72%</span>
+                    <span>{profitTarget > 0 ? `${targetAccuracy}%` : "—"}</span>
                  </div>
                  <div className="h-2 w-full bg-white/5 rounded-lg overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
-                      animate={{ width: '72%' }}
+                      animate={{ width: `${targetAccuracy}%` }}
                       className="h-full bg-[#3B82F6] glow-primary"
                     />
                  </div>
                  <p className="text-[10px] font-medium text-muted-foreground/50 leading-relaxed">
-                    You are currently 28% away from your monthly profit target of $5,000. Maintain the current win rate to hit it by week 4.
+                    {profitTarget > 0 ? (
+                      targetAccuracy >= 100
+                        ? `Goal Achieved! You have surpassed your monthly profit target of ${formatUSD(profitTarget)}.`
+                        : `You are currently ${100 - targetAccuracy}% away from your monthly profit target of ${formatUSD(profitTarget)}.`
+                    ) : (
+                      "No monthly profit target set. Define your goals in Configuration to track accuracy."
+                    )}
                  </p>
               </div>
            </div>

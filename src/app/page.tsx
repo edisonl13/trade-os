@@ -93,6 +93,14 @@ interface CalendarDay {
   losses: number;
 }
 
+interface AIInsight {
+  type: string;
+  title: string;
+  detail: string;
+  metric: number;
+  trend: "up" | "down" | "neutral";
+}
+
 /* ──────────────────────────────
    Components
    ────────────────────────────── */
@@ -167,6 +175,7 @@ export default function OverviewPage() {
   const [directions, setDirections] = useState<BreakdownItem[]>([]);
   const [heatmap, setHeatmap] = useState<HeatmapCell[]>([]);
   const [calendar, setCalendar] = useState<CalendarDay[]>([]);
+  const [insights, setInsights] = useState<AIInsight[]>([]);
 
   // Calendar nav
   const [calYear, setCalYear] = useState(new Date().getFullYear());
@@ -175,17 +184,19 @@ export default function OverviewPage() {
   const fetchAllData = useCallback(async () => {
     setDataLoading(true);
     try {
-      const [kpiRes, equityRes, dirRes, heatRes] = await Promise.all([
+      const [kpiRes, equityRes, dirRes, heatRes, insRes] = await Promise.all([
         fetch("/api/analytics?type=kpi"),
         fetch("/api/analytics?type=equity&granularity=day"),
         fetch("/api/analytics?type=directions"),
         fetch("/api/analytics?type=heatmap"),
+        fetch("/api/analytics?type=insights"),
       ]);
 
       if (kpiRes.ok) setKpi(await kpiRes.json());
       if (equityRes.ok) setEquityCurve(await equityRes.json());
       if (dirRes.ok) setDirections(await dirRes.json());
       if (heatRes.ok) setHeatmap(await heatRes.json());
+      if (insRes.ok) setInsights(await insRes.json());
 
       fetchCalendar(calYear, calMonth);
     } catch (err) {
@@ -562,16 +573,51 @@ export default function OverviewPage() {
               <div className="absolute top-0 right-0 p-3">
                 <BarChart3 className="h-4 w-4 text-[#06B6D4] animate-pulse" />
               </div>
-              <h3 className="heading-sports text-sm flex items-center gap-2">
+              <h3 className="heading-sports text-sm flex items-center gap-2 mb-6">
                 <span className="h-2 w-2 rounded-full bg-[#06B6D4] shadow-[0_0_8px_#06B6D4]" />
-                Behavior Snapshot
+                Intelligence Feed
               </h3>
-              <p className="text-[10px] font-medium text-muted-foreground/60 mt-3 leading-relaxed">
-                Based on your last {kpi?.closedTrades} trades, this summary surfaces your timing bias, win/loss distribution, and most consistent trade patterns.
-              </p>
-              <Button variant="link" className="text-[10px] font-black uppercase text-[#06B6D4] p-0 h-auto mt-4 hover:no-underline hover:text-[#06B6D4]/80">
-                Open Behavior Insights {'>'}
-              </Button>
+
+              <div className="space-y-6">
+                {insights.map((insight, idx) => (
+                  <div key={idx} className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[9px] font-black uppercase text-muted-foreground/40">{insight.title}</span>
+                      <span className={cn(
+                        "text-[9px] font-black px-1.5 py-0.5 rounded uppercase",
+                        insight.trend === "up" ? "bg-emerald-500/10 text-emerald-400" :
+                        insight.trend === "down" ? "bg-red-500/10 text-red-400" : "bg-white/5 text-white/40"
+                      )}>{insight.trend === "up" ? "Positive" : insight.trend === "down" ? "Warning" : "Neutral"}</span>
+                    </div>
+                    <p className="text-[11px] font-bold text-white/80 leading-relaxed">
+                      {insight.detail}
+                    </p>
+                    <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${insight.metric}%` }}
+                        className={cn(
+                          "h-full rounded-full",
+                          insight.trend === "up" ? "bg-emerald-500" :
+                          insight.trend === "down" ? "bg-red-500" : "bg-[#06B6D4]"
+                        )}
+                      />
+                    </div>
+                  </div>
+                ))}
+                
+                {insights.length === 0 && (
+                  <p className="text-[10px] font-medium text-muted-foreground/60 leading-relaxed">
+                    Analyzing patterns... Broadcast more trades to generate strategic intelligence.
+                  </p>
+                )}
+              </div>
+
+              <Link href="/analytics" className="block mt-6">
+                <Button variant="link" className="text-[10px] font-black uppercase text-[#06B6D4] p-0 h-auto hover:no-underline hover:text-[#06B6D4]/80">
+                  Deep Intelligence Analysis {'>'}
+                </Button>
+              </Link>
             </div>
           </div>
         </div>

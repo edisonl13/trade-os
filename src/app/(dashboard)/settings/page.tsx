@@ -36,6 +36,7 @@ interface TradingAccount {
   broker: string;
   currency: string;
   initialBalance: number;
+  monthlyProfitTarget: number;
   timezone: string;
 }
 
@@ -56,6 +57,7 @@ export default function SettingsPage() {
   const [broker, setBroker] = useState("");
   const [initialBalance, setInitialBalance] = useState("10000");
   const [currency, setCurrency] = useState("USD");
+  const [monthlyProfitTarget, setMonthlyProfitTarget] = useState("0");
   const [timezone, setTimezone] = useState("UTC");
   const [accountId, setAccountId] = useState<string | null>(null);
 
@@ -67,6 +69,7 @@ export default function SettingsPage() {
   const [subscriptionPlan, setSubscriptionPlan] = useState("Free");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [userLevel, setUserLevel] = useState<{ level: number; title: string }>({ level: 1, title: "Rookie" });
 
   const [accountLoaded, setAccountLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("profile");
@@ -81,14 +84,16 @@ export default function SettingsPage() {
       Promise.all([
         fetch("/api/trading-account").then((res) => res.ok ? res.json() : null),
         fetch("/api/settings").then((res) => res.ok ? res.json() : null),
+        fetch("/api/analytics?type=level").then((res) => res.ok ? res.json() : null),
       ])
-        .then(([accountData, settingsData]) => {
+        .then(([accountData, settingsData, levelData]) => {
           if (accountData) {
             setAccountId(accountData.id);
             setAccountLabel(accountData.label);
             setBroker(accountData.broker ?? "");
             setCurrency(accountData.currency);
             setInitialBalance(String(accountData.initialBalance));
+            setMonthlyProfitTarget(String(accountData.monthlyProfitTarget ?? 0));
             setTimezone(accountData.timezone);
             setTzSetting(accountData.timezone);
           }
@@ -98,6 +103,10 @@ export default function SettingsPage() {
             if (settingsData.billingEmail) setBillingEmail(settingsData.billingEmail);
             if (settingsData.subscriptionPlan) setSubscriptionPlan(settingsData.subscriptionPlan);
             setTwoFactorEnabled(Boolean(settingsData.twoFactorEnabled));
+          }
+
+          if (levelData) {
+            setUserLevel(levelData);
           }
 
           setAccountLoaded(true);
@@ -119,6 +128,7 @@ export default function SettingsPage() {
     broker,
     currency,
     initialBalance: parseFloat(initialBalance) || 0,
+    monthlyProfitTarget: parseFloat(monthlyProfitTarget) || 0,
     timezone: override?.timezone ?? timezone,
   });
 
@@ -270,7 +280,7 @@ export default function SettingsPage() {
                        </div>
                        <div>
                           <h3 className="heading-sports text-xl">{session?.user?.name}</h3>
-                          <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-1">Level 42 &middot; Pro Analytics Member</p>
+                          <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-1">Level {userLevel.level} &middot; {userLevel.title} Member</p>
                        </div>
                        <Button variant="outline" className="ml-auto text-[10px] font-black uppercase border-white/5 hover:bg-white/5">Change Avatar</Button>
                     </div>
@@ -364,6 +374,10 @@ export default function SettingsPage() {
                           <div className="space-y-2">
                             <Label className="label-sports ml-1">Base Currency</Label>
                             <Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} maxLength={3} className="h-12 bg-white/5 border-white/5 rounded-xl font-black tracking-widest" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="label-sports ml-1">Monthly Profit Target</Label>
+                            <Input type="number" value={monthlyProfitTarget} onChange={(e) => setMonthlyProfitTarget(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold text-[#3B82F6]" />
                           </div>
                        </div>
 

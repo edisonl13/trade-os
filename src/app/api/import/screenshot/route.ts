@@ -35,33 +35,18 @@ async function extractTradesFromScreenshot(
 ): Promise<TradeExtraction[]> {
   const deepseekKey = process.env.DEEPSEEK_API_KEY;
 
-  // Try DeepSeek API first
-  if (deepseekKey) {
-    try {
-      const result = await extractWithDeepSeek(imageBase64, mimeType, deepseekKey);
-      if (result.length > 0) return result;
-    } catch (error) {
-      console.error("DeepSeek extraction failed, falling back to mock:", error);
-    }
+  if (!deepseekKey) {
+    throw new Error("DEEPSEEK_API_KEY is not configured");
   }
 
-  // Final fallback: mock data
-  const now = new Date().toISOString();
-  const MOCK_TRADES: TradeExtraction[] = [
-    { symbol: "EURUSD", direction: "LONG", entryPrice: 1.08500, exitPrice: 1.09210, stopLoss: 1.08000, targetPrice: 1.09500, positionSize: 0.10, pnl: 71.00, tradedAt: now, fields: [{ field: "symbol", value: "EURUSD", confidence: 0.88, source: "ai" }, { field: "direction", value: "LONG", confidence: 0.92, source: "ai" }, { field: "entryPrice", value: 1.08500, confidence: 0.85, source: "ai" }] },
-    { symbol: "GBPUSD", direction: "SHORT", entryPrice: 1.26500, exitPrice: 1.25800, stopLoss: 1.27000, targetPrice: 1.25500, positionSize: 0.20, pnl: 140.00, tradedAt: now, fields: [{ field: "symbol", value: "GBPUSD", confidence: 0.82, source: "ai" }, { field: "direction", value: "SHORT", confidence: 0.88, source: "ai" }, { field: "entryPrice", value: 1.26500, confidence: 0.85, source: "ai" }] },
-    { symbol: "XAUUSD", direction: "LONG", entryPrice: 2320.50, exitPrice: null, stopLoss: 2310.00, targetPrice: 2340.00, positionSize: 0.05, pnl: null, tradedAt: now, fields: [{ field: "symbol", value: "XAUUSD", confidence: 0.90, source: "ai" }, { field: "direction", value: "LONG", confidence: 0.92, source: "ai" }, { field: "entryPrice", value: 2320.50, confidence: 0.87, source: "ai" }] },
-    { symbol: "USDJPY", direction: "SHORT", entryPrice: 149.500, exitPrice: 148.800, stopLoss: 150.000, targetPrice: 148.500, positionSize: 0.15, pnl: 105.00, tradedAt: now, fields: [{ field: "symbol", value: "USDJPY", confidence: 0.78, source: "ai" }, { field: "direction", value: "SHORT", confidence: 0.85, source: "ai" }, { field: "entryPrice", value: 149.500, confidence: 0.82, source: "ai" }] },
-    { symbol: "GBPJPY", direction: "LONG", entryPrice: 186.200, exitPrice: 187.500, stopLoss: 185.500, targetPrice: 188.000, positionSize: 0.08, pnl: 104.00, tradedAt: now, fields: [{ field: "symbol", value: "GBPJPY", confidence: 0.75, source: "ai" }, { field: "direction", value: "LONG", confidence: 0.80, source: "ai" }, { field: "entryPrice", value: 186.200, confidence: 0.78, source: "ai" }] },
-    { symbol: "EURUSD", direction: "SHORT", entryPrice: 1.08800, exitPrice: 1.08200, stopLoss: 1.09100, targetPrice: 1.08000, positionSize: 0.12, pnl: 72.00, tradedAt: now, fields: [{ field: "symbol", value: "EURUSD", confidence: 0.86, source: "ai" }, { field: "direction", value: "SHORT", confidence: 0.90, source: "ai" }, { field: "entryPrice", value: 1.08800, confidence: 0.84, source: "ai" }] },
-    { symbol: "AUDUSD", direction: "LONG", entryPrice: 0.65200, exitPrice: 0.65800, stopLoss: 0.64900, targetPrice: 0.66000, positionSize: 0.25, pnl: 150.00, tradedAt: now, fields: [{ field: "symbol", value: "AUDUSD", confidence: 0.80, source: "ai" }, { field: "direction", value: "LONG", confidence: 0.85, source: "ai" }, { field: "entryPrice", value: 0.65200, confidence: 0.81, source: "ai" }] },
-    { symbol: "USDCAD", direction: "SHORT", entryPrice: 1.36500, exitPrice: 1.35800, stopLoss: 1.36800, targetPrice: 1.35500, positionSize: 0.18, pnl: 126.00, tradedAt: now, fields: [{ field: "symbol", value: "USDCAD", confidence: 0.77, source: "ai" }, { field: "direction", value: "SHORT", confidence: 0.83, source: "ai" }, { field: "entryPrice", value: 1.36500, confidence: 0.79, source: "ai" }] },
-    { symbol: "BTCUSD", direction: "LONG", entryPrice: 62300, exitPrice: 64100, stopLoss: 61800, targetPrice: 64500, positionSize: 0.01, pnl: 18.00, tradedAt: now, fields: [{ field: "symbol", value: "BTCUSD", confidence: 0.72, source: "ai" }, { field: "direction", value: "LONG", confidence: 0.78, source: "ai" }, { field: "entryPrice", value: 62300, confidence: 0.80, source: "ai" }] },
-    { symbol: "EURJPY", direction: "SHORT", entryPrice: 162.800, exitPrice: 161.500, stopLoss: 163.500, targetPrice: 161.000, positionSize: 0.10, pnl: 130.00, tradedAt: now, fields: [{ field: "symbol", value: "EURJPY", confidence: 0.74, source: "ai" }, { field: "direction", value: "SHORT", confidence: 0.80, source: "ai" }, { field: "entryPrice", value: 162.800, confidence: 0.76, source: "ai" }] },
-    { symbol: "XAGUSD", direction: "LONG", entryPrice: 27.50, exitPrice: 28.20, stopLoss: 27.00, targetPrice: 28.50, positionSize: 0.50, pnl: 35.00, tradedAt: now, fields: [{ field: "symbol", value: "XAGUSD", confidence: 0.76, source: "ai" }, { field: "direction", value: "LONG", confidence: 0.82, source: "ai" }, { field: "entryPrice", value: 27.50, confidence: 0.79, source: "ai" }] },
-    { symbol: "GBPUSD", direction: "LONG", entryPrice: 1.26200, exitPrice: null, stopLoss: 1.25800, targetPrice: 1.27200, positionSize: 0.15, pnl: null, tradedAt: now, fields: [{ field: "symbol", value: "GBPUSD", confidence: 0.83, source: "ai" }, { field: "direction", value: "LONG", confidence: 0.87, source: "ai" }, { field: "entryPrice", value: 1.26200, confidence: 0.84, source: "ai" }] },
-  ];
-  return MOCK_TRADES;
+  // Try DeepSeek API
+  try {
+    const result = await extractWithDeepSeek(imageBase64, mimeType, deepseekKey);
+    return result;
+  } catch (error: any) {
+    console.error("DeepSeek extraction failed:", error);
+    throw new Error(`AI extraction failed: ${error.message}`);
+  }
 }
 
 /**

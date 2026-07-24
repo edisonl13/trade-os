@@ -368,3 +368,105 @@ export function computeCalendarData(
     losses: v.losses,
   }));
 }
+
+/* ──────────────────────────────
+   AI Insights (Broadcast Intel)
+   ────────────────────────────── */
+
+export interface AIInsight {
+  type: "session" | "direction" | "strategy" | "streak" | "drawdown";
+  title: string;
+  detail: string;
+  metric: number; // 0-100 score for progress bar or highlighting
+  trend: "up" | "down" | "neutral";
+}
+
+export function computeAIInsights(trades: TradeRecord[]): AIInsight[] {
+  const closed = trades.filter((t) => t.status === "CLOSED" && t.pnl !== null);
+  if (closed.length === 0) return [];
+
+  const insights: AIInsight[] = [];
+
+  // 1. Session Insight
+  const sessionBreakdown = computeSessionBreakdown(trades);
+  const bestSession = sessionBreakdown[0]; // Sorted by trade count by default, let's find highest win rate/pnl
+  const mostProfitableSession = [...sessionBreakdown].sort((a, b) => b.totalPnL - a.totalPnL)[0];
+  
+  if (mostProfitableSession && mostProfitableSession.trades > 0) {
+    const totalPnL = closed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+    const sessionPnL = mostProfitableSession.totalPnL;
+    const pct = totalPnL > 0 ? (sessionPnL / totalPnL) * 100 : 50;
+
+    insights.push({
+      type: "session",
+      title: "Session Performance",
+      detail: `Your performance is strongest during the ${mostProfitableSession.label.toUpperCase()} session, accounting for ${Math.abs(pct).toFixed(0)}% of your net results.`,
+      metric: Math.min(100, Math.max(0, mostProfitableSession.winRate ?? 0)),
+      trend: (mostProfitableSession.winRate ?? 0) > 50 ? "up" : "neutral",
+    });
+  }
+
+  // 2. Directional Bias
+  const directions = computeDirectionBreakdown(trades);
+  const long = directions.find(d => d.label === "LONG");
+  const short = directions.find(d => d.label === "SHORT");
+
+  if (long && short) {
+    const bestDir = long.winRate! > short.winRate! ? long : short;
+    const diff = Math.abs(long.winRate! - short.winRate!);
+
+    if (diff > 5) {
+      insights.push({
+        type: "direction",
+        title: "Directional Edge",
+        detail: `You have a significant edge on ${bestDir.label}S with a ${bestDir.winRate?.toFixed(0)}% win rate, which is ${diff.toFixed(0)}% higher than your opposite bias.`,
+        metric: bestDir.winRate ?? 0,
+        trend: bestDir.winRate! > 55 ? "up" : "neutral",
+      });
+    }
+  }
+
+  // 3. Risk/Streak Insight
+  const kpi = computeKPI(trades);
+  if (kpi.consecutiveLosses > 2) {
+    insights.push({
+      type: "streak",
+      title: "Psychological Guard",
+      detail: `You've encountered a ${kpi.consecutiveLosses}-match losing streak recently. Consider reducing position size by 50% until a winning signal is confirmed.`,
+      metric: Math.max(0, 100 - (kpi.consecutiveLosses * 10)),
+      trend: "down",
+    });
+  } else if (kpi.winRate && kpi.winRate > 60) {
+    insights.push({
+      type: "streak",
+      title: "High Efficiency",
+      detail: `Your current strike rate of ${kpi.winRate}% is elite. Strategy "${closed[0].strategy ?? 'Default'}" is showing high R:R efficiency.`,
+      metric: kpi.winRate,
+      trend: "up",
+    });
+  }
+
+  // Fallback if not enough complex data
+  if (insights.length < 2) {
+    insights.push({
+      type: "drawdown",
+      title: "Capital Preservation",
+      detail: `Current drawdown is held at ${kpi.maxDrawdownPercent.toFixed(1)}%. Maintain strict stop-loss discipline to protect the season's equity growth.`,
+      metric: Math.max(0, 100 - kpi.maxDrawdownPercent),
+      trend: kpi.maxDrawdownPercent > 10 ? "down" : "up",
+    });
+  }
+
+  return insights.slice(0, 3);
+}
+
+/**
+ * Deterministic user level calculation based on volume.
+ */
+export function computeUserLevel(tradesCount: number) {
+  if (tradesCount === 0) return { level: 1, title: "Rookie" };
+  if (tradesCount <= 10) return { level: 5, title: "Apprentice" };
+  if (tradesCount <= 50) return { level: 15, title: "Trader" };
+  if (tradesCount <= 200) return { level: 42, title: "Pro Analyst" };
+  return { level: 99, title: "Elite Strategist" };
+}

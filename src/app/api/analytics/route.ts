@@ -11,6 +11,8 @@ import {
   computeDirectionBreakdown,
   computeHeatmap,
   computeCalendarData,
+  computeAIInsights,
+  computeUserLevel,
   type TradeRecord,
 } from "@/lib/analytics";
 
@@ -77,6 +79,16 @@ export async function GET(request: NextRequest) {
     case "calendar": {
       const calendar = computeCalendarData(allTrades, year, month);
       return NextResponse.json(calendar);
+    }
+
+    case "insights": {
+      const insights = computeAIInsights(allTrades);
+      return NextResponse.json(insights);
+    }
+
+    case "level": {
+      const level = computeUserLevel(allTrades.length);
+      return NextResponse.json(level);
     }
 
     default:
