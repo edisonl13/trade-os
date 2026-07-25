@@ -44,9 +44,9 @@ export default function PrivacyPage() {
             <h2 className="text-lg font-black heading-sports text-white">4. Data Sharing</h2>
             <p>We do not sell, trade, or share your personal data with third parties except:</p>
             <ul className="list-disc pl-6 space-y-1">
-              <li>AI providers (DeepSeek) for screenshot analysis — images are transmitted securely and not retained</li>
-              <li>Infrastructure providers (Vercel, Turso) who process data under strict data processing agreements</li>
-              <li>If required by law or to protect our legal rights</li>
+              <li><strong>AI providers (DeepSeek)</strong> — Screenshots you upload are sent to DeepSeek's API for trade data extraction. DeepSeek's data retention policy is outside our control; we recommend reviewing their terms at <code className="text-[10px] bg-white/5 px-1 py-0.5 rounded">api.deepseek.com</code>. We do not knowingly send images containing personal identification.</li>
+              <li><strong>Infrastructure providers</strong> (Vercel, Turso) who process data under their respective data processing agreements.</li>
+              <li>If required by law or to protect our legal rights.</li>
             </ul>
           </section>
 

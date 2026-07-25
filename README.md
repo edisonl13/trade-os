@@ -8,11 +8,11 @@ Screenshot-first trading journal with AI-powered trade extraction from screensho
 
 - **CSV/Excel Batch Import** — Upload broker exports with auto field mapping and duplicate detection
 - **Screenshot AI Import** — Paste or upload trade screenshots, AI extracts trade data automatically (powered by DeepSeek)
-- **Performance Dashboard** — KPI cards, equity curve, directional bias, session heatmap, monthly calendar
+- **Performance Dashboard** — KPI cards, cumulative P&L, directional bias, session heatmap, monthly calendar
 - **Deep Analytics** — Performance, risk, and behavior analysis with interactive charts
 - **Trade Journal** — Full CRUD with search, pagination, and bulk operations
 - **Performance Calendar** — Day-by-day P&L visualization with monthly summaries
-- **Multi-Account Support** — Track multiple brokerage accounts
+- **Trading Account** — Single account tracking with configurable monthly profit targets
 
 ## Tech Stack
 

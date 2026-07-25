@@ -140,3 +140,20 @@
     @apply bg-white/10 rounded-full;
   }
 }
+
+/* ──────────────────────────────
+   Global caret: transparent on body, auto on inputs/textareas
+   Prevents blinking text cursor on non-interactive display text
+   ────────────────────────────── */
+
+body {
+  caret-color: transparent;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+[role="textbox"],
+[contenteditable] {
+  caret-color: auto;
+}

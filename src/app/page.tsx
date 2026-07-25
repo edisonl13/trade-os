@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
+import { toast } from "sonner";
 import {
   TrendingUp,
   Scan,
@@ -17,6 +18,7 @@ import {
   Filter,
   Loader2,
   Plus,
+  Minus,
   ArrowUpRight,
   ArrowDownRight,
 } from "lucide-react";
@@ -36,6 +38,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n/provider";
 
 /* ──────────────────────────────
    Types
@@ -55,7 +58,7 @@ interface KPIData {
   profitFactor: number | null;
   expectancy: number | null;
   maxDrawdown: number;
-  maxDrawdownPercent: number;
+  maxDrawdownPercent: number | null;
   bestTrade: number | null;
   worstTrade: number | null;
   consecutiveWins: number;
@@ -101,9 +104,79 @@ interface AIInsight {
   trend: "up" | "down" | "neutral";
 }
 
+function LocalizedInsight({ insight }: { insight: AIInsight }) {
+  const { t } = useI18n();
+  const titleKey = `insight.${insight.type}Title`;
+  const detailKey = `insight.${insight.type}Detail`;
+
+  return (
+    <>
+      <div className="flex justify-between items-center">
+        <span className="text-[9px] font-black uppercase text-muted-foreground/40">{t(titleKey)}</span>
+        <span className={cn(
+          "text-[9px] font-black px-1.5 py-0.5 rounded uppercase",
+          insight.trend === "up" ? "bg-emerald-500/10 text-emerald-400" :
+          insight.trend === "down" ? "bg-red-500/10 text-red-400" : "bg-white/5 text-white/40"
+        )}>{insight.trend === "up" ? t("common.positive") : insight.trend === "down" ? t("common.warning") : t("common.neutral")}</span>
+      </div>
+      <p className="text-[11px] font-bold text-white/80 leading-relaxed">
+        {t(detailKey)}
+      </p>
+    </>
+  );
+}
+
 /* ──────────────────────────────
    Components
    ────────────────────────────── */
+
+interface KpiTrendInfo {
+  direction: "up" | "down" | "neutral";
+  change: string | null;
+  insufficientData: boolean;
+}
+
+interface KpiTrends {
+  winRate: KpiTrendInfo;
+  profitFactor: KpiTrendInfo;
+  avgRR: KpiTrendInfo;
+  expectancy: KpiTrendInfo;
+  maxDrawdown: KpiTrendInfo;
+}
+
+function TrendBadge({ trend, higherIsBetter, change }: { trend: KpiTrendInfo; higherIsBetter: boolean; change?: string | null }) {
+  const { t } = useI18n();
+  if (trend.insufficientData) {
+    return (
+      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center bg-white/5 text-white/40">
+        <Minus className="h-3 w-3 mr-0.5" />
+        {t("kpi.sample")}
+      </span>
+    );
+  }
+
+  if (trend.direction === "neutral" || !trend.change) {
+    return (
+      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center bg-white/5 text-white/40">
+        <Minus className="h-3 w-3 mr-0.5" />
+        {change ?? "—"}
+      </span>
+    );
+  }
+
+  const isPositive = trend.direction === "up";
+  const isGood = higherIsBetter ? isPositive : !isPositive;
+
+  return (
+    <span className={cn(
+      "text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center",
+      isGood ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
+    )}>
+      {isPositive ? <ArrowUpRight className="h-3 w-3 mr-0.5" /> : <ArrowDownRight className="h-3 w-3 mr-0.5" />}
+      {trend.change}
+    </span>
+  );
+}
 
 function KPIPlayerCard({
   label,
@@ -111,33 +184,64 @@ function KPIPlayerCard({
   subValue,
   trend,
   colorClass = "text-white",
+  trendInfo,
+  higherIsBetter = true,
+  progress,
+  attention = false,
 }: {
   label: string;
   value: string;
   subValue?: string;
   trend?: "up" | "down";
   colorClass?: string;
+  trendInfo?: KpiTrendInfo;
+  higherIsBetter?: boolean;
+  progress?: number;
+  attention?: boolean;
 }) {
   return (
-    <div className="fifa-card p-5 group relative overflow-hidden">
-      <div className="absolute top-0 right-0 p-2 opacity-5 group-hover:opacity-10 transition-opacity">
-        <TrendingUp className="h-12 w-12" />
-      </div>
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        boxShadow: attention
+          ? ["0 0 0 rgba(239,68,68,0)", "0 0 22px rgba(239,68,68,0.28)", "0 0 0 rgba(239,68,68,0)"]
+          : "0 0 0 rgba(0,0,0,0)",
+      }}
+      transition={{ duration: attention ? 0.9 : 0.35 }}
+      whileHover={{ y: -2 }}
+      className={cn(
+        "fifa-card p-5 group relative overflow-hidden cursor-default select-none caret-transparent",
+        attention && "border-red-500/40"
+      )}
+    >
       <span className="label-sports mb-1 block">{label}</span>
       <div className="flex items-baseline gap-2">
         <span className={cn("text-2xl font-black heading-sports font-data", colorClass)}>{value}</span>
-        {trend && (
+        {trendInfo ? (
+          <TrendBadge trend={trendInfo} higherIsBetter={higherIsBetter} change={trendInfo.change} />
+        ) : trend ? (
           <span className={cn(
             "text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center",
             trend === "up" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
           )}>
             {trend === "up" ? <ArrowUpRight className="h-3 w-3 mr-0.5" /> : <ArrowDownRight className="h-3 w-3 mr-0.5" />}
-            {trend === "up" ? "High" : "Low"}
           </span>
-        )}
+        ) : null}
       </div>
       {subValue && <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-wider">{subValue}</span>}
-    </div>
+      {progress !== undefined && (
+        <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-white/5">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+            transition={{ duration: 0.65, ease: "easeOut" }}
+            className={cn("h-full rounded-full", attention ? "bg-red-500" : "bg-[#2563EB]")}
+          />
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -166,6 +270,7 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export default function OverviewPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
 
@@ -176,20 +281,31 @@ export default function OverviewPage() {
   const [heatmap, setHeatmap] = useState<HeatmapCell[]>([]);
   const [calendar, setCalendar] = useState<CalendarDay[]>([]);
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [trends, setTrends] = useState<KpiTrends | null>(null);
 
   // Calendar nav
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(new Date().getMonth() + 1);
 
+  const fetchCalendar = useCallback(async (year: number, month: number) => {
+    try {
+      const calRes = await fetch(`/api/analytics?type=calendar&year=${year}&month=${month}`);
+      if (calRes.ok) setCalendar(await calRes.json());
+    } catch {
+      toast.error(t("error.failed"));
+    }
+  }, [t]);
+
   const fetchAllData = useCallback(async () => {
     setDataLoading(true);
     try {
-      const [kpiRes, equityRes, dirRes, heatRes, insRes] = await Promise.all([
+      const [kpiRes, equityRes, dirRes, heatRes, insRes, trendRes] = await Promise.all([
         fetch("/api/analytics?type=kpi"),
         fetch("/api/analytics?type=equity&granularity=day"),
         fetch("/api/analytics?type=directions"),
         fetch("/api/analytics?type=heatmap"),
         fetch("/api/analytics?type=insights"),
+        fetch("/api/analytics?type=trends"),
       ]);
 
       if (kpiRes.ok) setKpi(await kpiRes.json());
@@ -197,21 +313,16 @@ export default function OverviewPage() {
       if (dirRes.ok) setDirections(await dirRes.json());
       if (heatRes.ok) setHeatmap(await heatRes.json());
       if (insRes.ok) setInsights(await insRes.json());
+      if (trendRes.ok) setTrends(await trendRes.json());
 
-      fetchCalendar(calYear, calMonth);
+      await fetchCalendar(calYear, calMonth);
     } catch (err) {
       console.error("Failed to fetch analytics data", err);
+      toast.error(t("error.failed"));
     } finally {
       setDataLoading(false);
     }
-  }, [calYear, calMonth]);
-
-  const fetchCalendar = useCallback(async (year: number, month: number) => {
-    try {
-      const calRes = await fetch(`/api/analytics?type=calendar&year=${year}&month=${month}`);
-      if (calRes.ok) setCalendar(await calRes.json());
-    } catch {}
-  }, []);
+  }, [calYear, calMonth, fetchCalendar, t]);
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
@@ -277,10 +388,8 @@ export default function OverviewPage() {
             <LayoutDashboard className="h-8 w-8 text-white" />
           </div>
           <div>
-            <h1 className="text-3xl font-black heading-sports">
-                Broadcast <span className="brand-gradient-text">Command Center</span>
-              </h1>
-              <p className="label-sports mt-1">Synchronized performance intelligence and squad analytics.</p>
+            <h1 className="text-3xl font-black heading-sports">{t("overview.title")}</h1>
+              <p className="label-sports mt-1">{t("overview.subtitle")}</p>
           </div>
         </div>
       </motion.div>
@@ -299,12 +408,12 @@ export default function OverviewPage() {
             <TrendingUp className="h-12 w-12 text-[#2563EB]" />
           </div>
           <div className="max-w-md space-y-4">
-            <h2 className="text-4xl font-black heading-sports">Awaiting <span className="text-[#06B6D4]">Upload</span></h2>
-            <p className="text-muted-foreground font-medium">Your review workspace is empty. Upload your trade history or log file to start analyzing behavior and performance.</p>
+            <h2 className="text-4xl font-black heading-sports">{t("empty.noTrades")}</h2>
+            <p className="text-muted-foreground font-medium">{t("empty.noTradesDesc")}</p>
           </div>
           <Link href="/import">
             <Button size="lg" className="brand-gradient text-white px-10 py-7 text-lg font-black uppercase glow-primary gap-3">
-              <Plus className="h-6 w-6" /> Import Trade History
+              <Plus className="h-6 w-6" /> {t("empty.importCta")}
             </Button>
           </Link>
         </motion.div>
@@ -314,15 +423,15 @@ export default function OverviewPage() {
           <div className="lg:col-span-8 space-y-8">
             {/* Top Scoreboard */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
-                className="fifa-card p-8 flex flex-col justify-center relative overflow-hidden"
+                className="fifa-card p-8 flex flex-col justify-center relative overflow-hidden cursor-default select-none caret-transparent"
               >
                 <div className="absolute top-0 right-0 p-4 opacity-10">
                   <Activity className="h-20 w-20 text-[#2563EB]" />
                 </div>
-                <span className="label-sports mb-2">Historical Performance</span>
+                <span className="label-sports mb-2">{t("overview.historical")}</span>
                 <div className="flex items-baseline gap-2">
                   <span className={cn(
                     "text-6xl font-black heading-sports tracking-tighter font-data",
@@ -333,12 +442,12 @@ export default function OverviewPage() {
                 </div>
                 <div className="flex items-center gap-4 mt-6">
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">Closed</span>
+                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">{t("overview.closed")}</span>
                     <span className="text-lg font-black heading-sports font-data">{kpi?.closedTrades}</span>
                   </div>
                   <div className="w-px h-8 bg-white/5" />
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">Open Positions</span>
+                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">{t("overview.open")}</span>
                     <span className="text-lg font-black heading-sports text-[#06B6D4] font-data">{kpi?.openTrades}</span>
                   </div>
                 </div>
@@ -350,10 +459,10 @@ export default function OverviewPage() {
                 className="fifa-card p-6 min-h-[220px]"
               >
                 <div className="flex items-center justify-between mb-4">
-                  <span className="label-sports">Equity Curve</span>
+                  <span className="label-sports">{t("overview.cumulativePnl")}</span>
                   <div className="flex gap-2">
                     <div className="h-1.5 w-1.5 rounded-full bg-[#2563EB] animate-pulse" />
-                    <span className="text-[8px] font-black uppercase tracking-widest text-[#2563EB]">Equity Trend</span>
+                    <span className="text-[8px] font-black uppercase tracking-widest text-[#2563EB]">{t("overview.pnlTrend")}</span>
                   </div>
                 </div>
                 <div className="h-32">
@@ -365,24 +474,54 @@ export default function OverviewPage() {
                           <stop offset="95%" stopColor="#2563EB" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
-                      <Area type="monotone" dataKey="equity" stroke="#2563EB" strokeWidth={3} fillOpacity={1} fill="url(#colorEquity)" dot={false} />
+                      <Area type="monotone" dataKey="cumulativePnL" stroke="#2563EB" strokeWidth={3} fillOpacity={1} fill="url(#colorEquity)" dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
                 <div className="mt-4 flex justify-between items-center text-[10px] font-bold uppercase text-muted-foreground/40">
-                  <span>Earliest Record</span>
-                  <span>Latest Record</span>
+                  <span>{t("overview.earliest")}</span>
+                  <span>{t("overview.latest")}</span>
                 </div>
               </motion.div>
             </div>
 
             {/* Player Stats Grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              <KPIPlayerCard label="Win Rate" value={kpi?.winRate ? `${kpi.winRate}%` : "—"} trend={kpi?.winRate && kpi.winRate > 50 ? "up" : "down"} />
-              <KPIPlayerCard label="Profit Factor" value={kpi?.profitFactor?.toFixed(2) ?? "—"} colorClass="text-[#06B6D4]" />
-              <KPIPlayerCard label="Avg R:R" value={kpi?.avgRR?.toFixed(2) ?? "—"} />
-              <KPIPlayerCard label="Expectancy" value={kpi?.expectancy ? `${kpi.expectancy.toFixed(2)}R` : "—"} colorClass={currentPnL >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"} />
-              <KPIPlayerCard label="Max Drawdown" value={kpi?.maxDrawdownPercent ? `${kpi.maxDrawdownPercent.toFixed(1)}%` : "—"} colorClass="text-[#EF4444]" />
+              <KPIPlayerCard
+                label={t("overview.winRate")}
+                value={kpi?.winRate !== null && kpi?.winRate !== undefined ? `${kpi.winRate}%` : "—"}
+                subValue={kpi ? `${kpi.winningTrades}/${kpi.closedTrades} · ${t("kpi.sample")}` : undefined}
+                trendInfo={trends?.winRate}
+                colorClass={(kpi?.winRate ?? 100) < 30 ? "text-[#EF4444]" : "text-white"}
+                progress={kpi?.winRate ?? 0}
+                attention={(kpi?.winRate ?? 100) < 30}
+              />
+              <KPIPlayerCard
+                label={t("overview.profitFactor")}
+                value={kpi?.profitFactor !== null && kpi?.profitFactor !== undefined ? kpi.profitFactor.toFixed(2) : "—"}
+                subValue={(kpi?.profitFactor ?? 1) < 1 ? "< 1.00" : undefined}
+                trendInfo={trends?.profitFactor}
+                colorClass={(kpi?.profitFactor ?? 1) < 1 ? "text-[#F59E0B]" : "text-[#22C55E]"}
+              />
+              <KPIPlayerCard
+                label={t("overview.avgRR")}
+                value={kpi?.avgRR !== null && kpi?.avgRR !== undefined ? kpi.avgRR.toFixed(2) : "—"}
+                trendInfo={trends?.avgRR}
+                colorClass={(kpi?.avgRR ?? 1) < 1 ? "text-[#F59E0B]" : "text-white"}
+              />
+              <KPIPlayerCard
+                label={t("overview.expectancy")}
+                value={kpi?.expectancy !== null && kpi?.expectancy !== undefined ? `${kpi.expectancy.toFixed(2)}R` : "—"}
+                trendInfo={trends?.expectancy}
+                colorClass={(kpi?.expectancy ?? 0) >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}
+              />
+              <KPIPlayerCard
+                label={t("overview.maxDrawdown")}
+                value={kpi?.maxDrawdownPercent !== null && kpi?.maxDrawdownPercent !== undefined ? `${kpi.maxDrawdownPercent.toFixed(1)}%` : t("kpi.setBalance")}
+                trendInfo={trends?.maxDrawdown}
+                higherIsBetter={false}
+                colorClass={kpi?.maxDrawdownPercent === null ? "text-white/50 text-sm" : "text-[#EF4444]"}
+              />
             </div>
 
             {/* Technical Analysis Grid */}
@@ -390,19 +529,19 @@ export default function OverviewPage() {
               {/* Long vs Short Broadcast */}
               <div className="fifa-card p-6 space-y-6">
                 <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">Trade Direction Bias</h3>
+                  <h3 className="heading-sports text-sm">{t("overview.directionBias")}</h3>
                   <Filter className="h-3 w-3 text-muted-foreground/30" />
                 </div>
                 <div className="flex justify-between items-center px-2">
                   <div className="text-center">
-                    <span className="label-sports text-[#2563EB]">Long Trades</span>
+                    <span className="label-sports text-[#2563EB]">{t("common.longTrades")}</span>
                     <p className="text-xl font-black heading-sports mt-1 font-data">{formatUSD(longTotalPnL)}</p>
                   </div>
                   <div className="h-10 w-10 rounded-full border border-white/5 flex items-center justify-center">
                     <span className="text-[10px] font-black opacity-20">VS</span>
                   </div>
                   <div className="text-center">
-                    <span className="label-sports text-[#EC4899]">Short Trades</span>
+                    <span className="label-sports text-[#EC4899]">{t("common.shortTrades")}</span>
                     <p className="text-xl font-black heading-sports mt-1 font-data">{formatUSD(shortTotalPnL)}</p>
                   </div>
                 </div>
@@ -420,12 +559,12 @@ export default function OverviewPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-2">
                   <div className="space-y-1">
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">Win Rate</span><span className="text-[#2563EB]">{longs?.winRate ?? 0}%</span></div>
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">Total</span><span>{longs?.trades ?? 0}</span></div>
+                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("overview.winRate")}</span><span className="text-[#2563EB]">{longs?.winRate ?? 0}%</span></div>
+                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("common.total")}</span><span>{longs?.trades ?? 0}</span></div>
                   </div>
                   <div className="space-y-1">
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">Win Rate</span><span className="text-[#EC4899]">{shorts?.winRate ?? 0}%</span></div>
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">Total</span><span>{shorts?.trades ?? 0}</span></div>
+                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("overview.winRate")}</span><span className="text-[#EC4899]">{shorts?.winRate ?? 0}%</span></div>
+                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("common.total")}</span><span>{shorts?.trades ?? 0}</span></div>
                   </div>
                 </div>
               </div>
@@ -433,7 +572,7 @@ export default function OverviewPage() {
               {/* Training Heatmap */}
               <div className="fifa-card p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">Trade Density</h3>
+                  <h3 className="heading-sports text-sm">{t("overview.density")}</h3>
                   <Badge variant="outline" className="text-xs font-black uppercase border-white/5 bg-white/5">H &times; W</Badge>
                 </div>
                 <div className="grid grid-cols-8 gap-1.5">
@@ -461,18 +600,18 @@ export default function OverviewPage() {
                   ))}
                 </div>
                 <div className="flex items-center justify-center gap-4 pt-2 border-t border-white/5">
-                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#EF4444]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">Loss Zone</span></div>
-                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#22C55E]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">Profit Zone</span></div>
+                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#EF4444]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">{t("common.lossZone")}</span></div>
+                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#22C55E]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">{t("common.profitZone")}</span></div>
                 </div>
               </div>
 
               {/* Match Calendar */}
               <div className="fifa-card p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">Monthly Trade Calendar</h3>
+                  <h3 className="heading-sports text-sm">{t("overview.calendar")}</h3>
                   <div className="flex gap-2">
-                    <button onClick={() => { setCalMonth(m => m === 1 ? 12 : m - 1); if (calMonth === 1) setCalYear(y => y - 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronLeft className="h-3 w-3" /></button>
-                    <button onClick={() => { setCalMonth(m => m === 12 ? 1 : m + 1); if (calMonth === 12) setCalYear(y => y + 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronRight className="h-3 w-3" /></button>
+                    <button aria-label={t("calendar.previousMonth")} onClick={() => { setCalMonth(m => m === 1 ? 12 : m - 1); if (calMonth === 1) setCalYear(y => y - 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronLeft className="h-3 w-3" /></button>
+                    <button aria-label={t("calendar.nextMonth")} onClick={() => { setCalMonth(m => m === 12 ? 1 : m + 1); if (calMonth === 12) setCalYear(y => y + 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronRight className="h-3 w-3" /></button>
                   </div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 bg-white/5 p-1 rounded-lg">
@@ -493,11 +632,11 @@ export default function OverviewPage() {
                 </div>
                 <div className="space-y-1.5 pt-2 border-t border-white/5">
                   <div className="flex justify-between text-[9px] font-black uppercase">
-                    <span className="text-muted-foreground/40">Monthly P&L</span>
+                    <span className="text-muted-foreground/40">{t("overview.monthlyPnl")}</span>
                     <span className={cn("font-data", monthPnL >= 0 ? "text-[#22C55E]" : "text-[#EF4444]")}>{formatUSD(monthPnL)}</span>
                   </div>
                   <div className="flex justify-between text-[9px] font-black uppercase">
-                    <span className="text-muted-foreground/40">Win Rate</span>
+                    <span className="text-muted-foreground/40">{t("overview.winRate")}</span>
                     <span>{monthWinRate.toFixed(1)}%</span>
                   </div>
                 </div>
@@ -507,37 +646,18 @@ export default function OverviewPage() {
 
           {/* Sidebar Highlights */}
           <div className="lg:col-span-4 space-y-8">
-            {/* Quick Actions Card */}
-            <div className="fifa-card brand-gradient p-8 text-center relative overflow-hidden group cursor-pointer shadow-2xl transition-transform hover:-translate-y-1">
-              <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors" />
-              <div className="relative z-10 space-y-6">
-                <div className="h-20 w-20 mx-auto rounded-3xl bg-white/20 backdrop-blur-md flex items-center justify-center glow-primary">
-                  <Plus className="h-10 w-10 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-2xl font-black heading-sports">Sync <span className="text-[#06B6D4]">Signal</span></h3>
-                  <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mt-2">Upload CSV Feed or AI Vision Screenshot</p>
-                </div>
-                <Link href="/import" className="block">
-                  <Button variant="secondary" className="w-full bg-white text-indigo-600 font-black uppercase hover:bg-white/90">
-                    Open Import Center {'>'}
-                  </Button>
-                </Link>
-              </div>
-            </div>
-
             {/* Performance Highlights */}
             <div className="fifa-card p-6 space-y-6">
-              <h3 className="heading-sports text-sm">Analysis Highlights</h3>
+              <h3 className="heading-sports text-sm">{t("overview.analysisHighlights")}</h3>
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-white/5 rounded-xl p-4 border border-white/5">
-                    <span className="label-sports block mb-1">Best Trade</span>
-                    <p className="text-lg font-black heading-sports text-[#22C55E]">{kpi?.bestTrade ? formatUSD(kpi.bestTrade) : "—"}</p>
+                    <span className="label-sports block mb-1">{t("overview.bestTrade")}</span>
+                    <p className="text-lg font-black heading-sports text-[#22C55E]">{kpi?.bestTrade !== null && kpi?.bestTrade !== undefined ? formatUSD(kpi.bestTrade) : "—"}</p>
                   </div>
                   <div className="bg-white/5 rounded-xl p-4 border border-white/5">
-                    <span className="label-sports block mb-1">Worst Trade</span>
-                    <p className="text-lg font-black heading-sports text-[#EF4444]">{kpi?.worstTrade ? formatUSD(kpi.worstTrade) : "—"}</p>
+                    <span className="label-sports block mb-1">{t("overview.worstTrade")}</span>
+                    <p className="text-lg font-black heading-sports text-[#EF4444]">{kpi?.worstTrade !== null && kpi?.worstTrade !== undefined ? formatUSD(kpi.worstTrade) : "—"}</p>
                   </div>
                 </div>
                 
@@ -547,7 +667,7 @@ export default function OverviewPage() {
                       <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
                         <ArrowUpRight className="h-5 w-5" />
                       </div>
-                      <span className="text-[11px] font-black uppercase">Longest Win Streak</span>
+                      <span className="text-[11px] font-black uppercase">{t("overview.longestWin")}</span>
                     </div>
                     <span className="text-xl font-black heading-sports text-emerald-400 font-data">{kpi?.consecutiveWins}</span>
                   </div>
@@ -557,7 +677,7 @@ export default function OverviewPage() {
                       <div className="h-8 w-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-400">
                         <ArrowDownRight className="h-5 w-5" />
                       </div>
-                      <span className="text-[11px] font-black uppercase">Longest Loss Streak</span>
+                      <span className="text-[11px] font-black uppercase">{t("overview.longestLoss")}</span>
                     </div>
                     <span className="text-xl font-black heading-sports text-red-400 font-data">{kpi?.consecutiveLosses}</span>
                   </div>
@@ -572,23 +692,13 @@ export default function OverviewPage() {
               </div>
               <h3 className="heading-sports text-sm flex items-center gap-2 mb-6">
                 <span className="h-2 w-2 rounded-full bg-[#06B6D4] shadow-[0_0_8px_#06B6D4]" />
-                Intelligence Feed
+                {t("overview.intelligenceFeed")}
               </h3>
 
               <div className="space-y-6">
                 {insights.map((insight, idx) => (
                   <div key={idx} className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[9px] font-black uppercase text-muted-foreground/40">{insight.title}</span>
-                      <span className={cn(
-                        "text-[9px] font-black px-1.5 py-0.5 rounded uppercase",
-                        insight.trend === "up" ? "bg-emerald-500/10 text-emerald-400" :
-                        insight.trend === "down" ? "bg-red-500/10 text-red-400" : "bg-white/5 text-white/40"
-                      )}>{insight.trend === "up" ? "Positive" : insight.trend === "down" ? "Warning" : "Neutral"}</span>
-                    </div>
-                    <p className="text-[11px] font-bold text-white/80 leading-relaxed">
-                      {insight.detail}
-                    </p>
+                    <LocalizedInsight insight={insight} />
                     <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
@@ -605,14 +715,14 @@ export default function OverviewPage() {
                 
                 {insights.length === 0 && (
                   <p className="text-[10px] font-medium text-muted-foreground/60 leading-relaxed">
-                    Analyzing patterns... Broadcast more trades to generate strategic intelligence.
+                    {t("empty.noInsights")}
                   </p>
                 )}
               </div>
 
               <Link href="/analytics" className="block mt-6">
                 <Button variant="link" className="text-[10px] font-black uppercase text-[#06B6D4] p-0 h-auto hover:no-underline hover:text-[#06B6D4]/80">
-                  Deep Intelligence Analysis {'>'}
+                  {t("overview.deepAnalytics")} {'>'}
                 </Button>
               </Link>
             </div>

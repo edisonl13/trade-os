@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
+import { toast } from "sonner";
 import {
   CalendarDays,
   ChevronLeft,
@@ -18,6 +19,8 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { useI18n } from "@/lib/i18n/provider";
+import { getDateStrInTz } from "@/lib/timezone";
 
 interface CalendarDay {
   date: string;
@@ -26,13 +29,6 @@ interface CalendarDay {
   wins: number;
   losses: number;
 }
-
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-
-const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 function formatUSD(n: number): string {
   const abs = Math.abs(n);
@@ -43,11 +39,13 @@ function formatUSD(n: number): string {
 export default function CalendarPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { t, locale } = useI18n();
 
   const [loading, setLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
   const [calendarData, setCalendarData] = useState<CalendarDay[]>([]);
   const [profitTarget, setProfitTarget] = useState<number>(0);
+  const [timezone, setTimezone] = useState("UTC");
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
 
@@ -63,12 +61,14 @@ export default function CalendarPage() {
       if (accRes.ok) {
         const acc = await accRes.json();
         setProfitTarget(acc?.monthlyProfitTarget ?? 0);
+        setTimezone(acc?.timezone ?? "UTC");
       }
     } catch {
+      toast.error(t("error.failed"));
     } finally {
       setDataLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
@@ -89,6 +89,15 @@ export default function CalendarPage() {
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDayOfWeek = new Date(year, month - 1, 1).getDay();
   const calendarDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const monthLabel = new Intl.DateTimeFormat(locale, {
+    month: "long",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+  const weekdayLabels = [
+    t("weekday.sun"), t("weekday.mon"), t("weekday.tue"), t("weekday.wed"),
+    t("weekday.thu"), t("weekday.fri"), t("weekday.sat"),
+  ];
+  const todayInTimezone = getDateStrInTz(Date.now(), timezone);
 
   const monthPnL = calendarData.reduce((sum, d) => sum + d.pnl, 0);
   const monthTrades = calendarData.reduce((sum, d) => sum + d.trades, 0);
@@ -117,14 +126,14 @@ export default function CalendarPage() {
         className="flex flex-wrap items-end justify-between gap-6"
       >
         <div>
-          <p className="label-sports mb-1">Time Dimension</p>
-          <h1 className="text-3xl font-black heading-sports">Performance <span className="brand-gradient-text">Calendar</span></h1>
+          <p className="label-sports mb-1">{t("common.timeDimension")}</p>
+          <h1 className="text-3xl font-black heading-sports">{t("calendar.title")}</h1>
         </div>
 
         <div className="flex items-center gap-4 bg-white/5 p-1.5 rounded-2xl border border-white/5">
-           <button onClick={() => navMonth(-1)} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ChevronLeft className="h-5 w-5" /></button>
-           <h2 className="text-sm font-black heading-sports px-4 min-w-[140px] text-center">{MONTHS[month - 1]} {year}</h2>
-           <button onClick={() => navMonth(1)} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ChevronRight className="h-5 w-5" /></button>
+           <button aria-label={t("calendar.previousMonth")} onClick={() => navMonth(-1)} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ChevronLeft className="h-5 w-5" /></button>
+           <h2 className="text-sm font-black heading-sports px-4 min-w-[140px] text-center">{monthLabel} {year}</h2>
+           <button aria-label={t("calendar.nextMonth")} onClick={() => navMonth(1)} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ChevronRight className="h-5 w-5" /></button>
         </div>
       </motion.div>
 
@@ -133,7 +142,7 @@ export default function CalendarPage() {
         <div className="lg:col-span-8 space-y-8">
           <div className="fifa-card p-6">
             <div className="grid grid-cols-7 gap-3 mb-6">
-              {WEEKDAYS.map(d => (
+              {weekdayLabels.map(d => (
                 <div key={d} className="text-center text-[10px] font-black text-muted-foreground/40 tracking-[0.2em]">{d}</div>
               ))}
             </div>
@@ -145,7 +154,7 @@ export default function CalendarPage() {
               {calendarDays.map(day => {
                 const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
                 const data = calendarData.find(d => d.date === dateStr);
-                const isToday = new Date().toISOString().startsWith(dateStr);
+                const isToday = todayInTimezone === dateStr;
 
                 return (
                   <motion.div 
@@ -176,7 +185,7 @@ export default function CalendarPage() {
                     )}
 
                     <div className="flex justify-between items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                       <span className="text-[7px] font-black uppercase text-white/40">{data?.trades ?? 0} TRADES</span>
+                       <span className="text-[7px] font-black uppercase text-white/40">{data?.trades ?? 0} {t("calendar.trades")}</span>
                     </div>
                   </motion.div>
                 );
@@ -188,12 +197,12 @@ export default function CalendarPage() {
         {/* Calendar Sidebar Stats */}
         <div className="lg:col-span-4 space-y-8">
            <div className="fifa-card p-8 space-y-6">
-              <h3 className="heading-sports text-sm">Monthly <span className="text-[#3B82F6]">Summary</span></h3>
+              <h3 className="heading-sports text-sm">{t("calendar.monthlySummary")}</h3>
               
               <div className="space-y-4">
                  <div className="flex justify-between items-end p-4 rounded-2xl bg-white/5 border border-white/5">
                     <div>
-                       <p className="label-sports">Net Results</p>
+                       <p className="label-sports">{t("calendar.netResults")}</p>
                        <p className={cn("text-3xl font-black heading-sports mt-1", monthPnL >= 0 ? "text-[#22C55E]" : "text-[#EF4444]")}>{formatUSD(monthPnL)}</p>
                     </div>
                     {monthPnL >= 0 ? <ArrowUpRight className="h-8 w-8 text-[#22C55E] opacity-20" /> : <ArrowDownRight className="h-8 w-8 text-[#EF4444] opacity-20" />}
@@ -201,11 +210,11 @@ export default function CalendarPage() {
 
                  <div className="grid grid-cols-2 gap-4">
                     <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                       <p className="label-sports">Total Matches</p>
+                       <p className="label-sports">{t("calendar.totalMatches")}</p>
                        <p className="text-xl font-black heading-sports mt-1">{monthTrades}</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                       <p className="label-sports">Win Ratio</p>
+                       <p className="label-sports">{t("calendar.winRatio")}</p>
                        <p className="text-xl font-black heading-sports mt-1 text-[#06B6D4]">{monthWinRate.toFixed(1)}%</p>
                     </div>
                  </div>
@@ -213,15 +222,15 @@ export default function CalendarPage() {
 
               <div className="space-y-3 pt-4 border-t border-white/5">
                  <div className="flex justify-between text-[10px] font-black uppercase">
-                    <span className="text-muted-foreground/40">Successful Days</span>
+                    <span className="text-muted-foreground/40">{t("calendar.successfulDays")}</span>
                     <span className="text-[#22C55E]">{calendarData.filter(d => d.pnl > 0).length}</span>
                  </div>
                  <div className="flex justify-between text-[10px] font-black uppercase">
-                    <span className="text-muted-foreground/40">Difficult Days</span>
+                    <span className="text-muted-foreground/40">{t("calendar.difficultDays")}</span>
                     <span className="text-[#EF4444]">{calendarData.filter(d => d.pnl < 0).length}</span>
                  </div>
                  <div className="flex justify-between text-[10px] font-black uppercase">
-                    <span className="text-muted-foreground/40">Total Wins</span>
+                    <span className="text-muted-foreground/40">{t("calendar.totalWins")}</span>
                     <span>{monthWins}</span>
                  </div>
               </div>
@@ -230,11 +239,11 @@ export default function CalendarPage() {
            <div className="fifa-card p-6 bg-gradient-to-br from-[#3B82F6]/10 to-transparent">
               <h3 className="heading-sports text-xs flex items-center gap-2">
                  <Target className="h-4 w-4 text-[#3B82F6]" />
-                 Target Accuracy
+                 {t("calendar.targetAccuracy")}
               </h3>
               <div className="mt-6 space-y-4">
                  <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">
-                    <span>Performance vs Goal</span>
+                    <span>{t("calendar.perfVsGoal")}</span>
                     <span>{profitTarget > 0 ? `${targetAccuracy}%` : "—"}</span>
                  </div>
                  <div className="h-2 w-full bg-white/5 rounded-lg overflow-hidden">
@@ -247,10 +256,10 @@ export default function CalendarPage() {
                  <p className="text-[10px] font-medium text-muted-foreground/50 leading-relaxed">
                     {profitTarget > 0 ? (
                       targetAccuracy >= 100
-                        ? `Goal Achieved! You have surpassed your monthly profit target of ${formatUSD(profitTarget)}.`
-                        : `You are currently ${100 - targetAccuracy}% away from your monthly profit target of ${formatUSD(profitTarget)}.`
+                        ? `${t("calendar.goalAchieved")} ${formatUSD(profitTarget)}.`
+                        : t("calendar.awayFromTarget", String(100 - targetAccuracy), formatUSD(profitTarget))
                     ) : (
-                      "No monthly profit target set. Define your goals in Configuration to track accuracy."
+                      t("calendar.noTarget")
                     )}
                  </p>
               </div>

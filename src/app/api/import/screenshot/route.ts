@@ -2,8 +2,46 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { trades, tradingAccounts, tradeScreenshots } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+
+/* ──────────────────────────────
+   Constants & Limits
+   ────────────────────────────── */
+
+const MAX_IMAGE_SIZE_MB = 10;
+const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
+const MAX_IMAGES_PER_REQUEST = 5;
+const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/bmp"];
+
+// Rate limiting
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = 10;
+const rateLimitMap = new Map<string, { count: number; windowStart: number }>();
+
+function checkUploadRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(userId);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW) {
+    rateLimitMap.set(userId, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= MAX_REQUESTS_PER_WINDOW) return false;
+  entry.count++;
+  return true;
+}
+
+// Periodic cleanup
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW) rateLimitMap.delete(key);
+  }
+}, 60_000);
+
+/* ──────────────────────────────
+   Types
+   ────────────────────────────── */
 
 interface ExtractedField {
   field: string;
@@ -25,106 +63,62 @@ interface TradeExtraction {
   fields: ExtractedField[];
 }
 
+const VALID_FIELDS = [
+  "symbol", "direction", "entryPrice", "exitPrice", "stopLoss",
+  "targetPrice", "positionSize", "pnl", "tradedAt",
+] as const;
+
 /**
- * Extract ALL trades from a single screenshot.
- * Tries DeepSeek first, then Gemini, then falls back to mock data.
+ * Validate and sanitize AI-extracted trade data.
  */
-async function extractTradesFromScreenshot(
-  imageBase64: string,
-  mimeType: string
-): Promise<TradeExtraction[]> {
-  const deepseekKey = process.env.DEEPSEEK_API_KEY;
+function validateExtraction(data: unknown): TradeExtraction[] {
+  if (!Array.isArray(data)) return [];
 
-  if (!deepseekKey) {
-    throw new Error("DEEPSEEK_API_KEY is not configured");
-  }
+  return data
+    .map((item: any, idx: number): TradeExtraction | null => {
+      if (!item || typeof item !== "object") return null;
 
-  // Try DeepSeek API
-  try {
-    const result = await extractWithDeepSeek(imageBase64, mimeType, deepseekKey);
-    return result;
-  } catch (error: any) {
-    console.error("DeepSeek extraction failed:", error);
-    throw new Error(`AI extraction failed: ${error.message}`);
-  }
+      const symbol = typeof item.symbol === "string" ? item.symbol.toUpperCase().trim().slice(0, 20) : null;
+      const direction = item.direction === "SHORT" ? "SHORT" : item.direction === "LONG" ? "LONG" : null;
+      const entryPrice = typeof item.entryPrice === "number" && isFinite(item.entryPrice) ? item.entryPrice : null;
+      const exitPrice = typeof item.exitPrice === "number" && isFinite(item.exitPrice) ? item.exitPrice : null;
+      const stopLoss = typeof item.stopLoss === "number" && isFinite(item.stopLoss) ? item.stopLoss : null;
+      const targetPrice = typeof item.targetPrice === "number" && isFinite(item.targetPrice) ? item.targetPrice : null;
+      const positionSize = typeof item.positionSize === "number" && isFinite(item.positionSize) ? item.positionSize : null;
+      const pnl = typeof item.pnl === "number" && isFinite(item.pnl) ? item.pnl : null;
+
+      let tradedAt: string | null = null;
+      if (typeof item.tradedAt === "string") {
+        const d = new Date(item.tradedAt);
+        if (!isNaN(d.getTime())) {
+          tradedAt = d.toISOString();
+        }
+      }
+
+      const fields: ExtractedField[] = [];
+      for (const field of VALID_FIELDS) {
+        if (item[field] !== undefined && item[field] !== null) {
+          fields.push({
+            field,
+            value: item[field],
+            confidence: typeof item.confidence === "number" ? Math.min(1, Math.max(0, item.confidence)) : 0.5,
+            source: "ai",
+          });
+        }
+      }
+
+      // Must have at least a symbol to be useful
+      if (!symbol) return null;
+
+      return { symbol, direction, entryPrice, exitPrice, stopLoss, targetPrice, positionSize, pnl, tradedAt, fields };
+    })
+    .filter((t): t is TradeExtraction => t !== null);
 }
 
-/**
- * Call Gemini Vision API to extract ALL trades from a screenshot.
- */
-async function extractWithGemini(
-  imageBase64: string,
-  mimeType: string,
-  apiKey: string
-): Promise<TradeExtraction[]> {
-  const prompt = `You are a trade data extraction assistant. Extract ALL trade records visible in this trading screenshot.
+/* ──────────────────────────────
+   DeepSeek Vision extraction
+   ────────────────────────────── */
 
-Return ONLY valid JSON — an array of trade objects:
-[
-  {
-    "symbol": "instrument/pair e.g. EURUSD",
-    "direction": "LONG or SHORT",
-    "entryPrice": number or null,
-    "exitPrice": number or null,
-    "stopLoss": number or null,
-    "targetPrice": number or null,
-    "positionSize": number or null,
-    "pnl": number or null,
-    "tradedAt": "ISO date string or null",
-    "fields": [
-      {"field": "fieldName", "value": value, "confidence": 0.0-1.0}
-    ]
-  }
-]
-
-RULES:
-- Extract EVERY trade visible in the image.
-- If a field is not visible, set it to null. Do NOT invent values.
-- pnl is the profit/loss in account currency.
-- direction must be "LONG" or "SHORT".
-- Return empty array [] if no trades are found.`;
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType,
-                  data: imageBase64,
-                },
-              },
-            ],
-          },
-        ],
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Gemini API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-
-  // Extract JSON array from response
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error("No JSON array found in Gemini response");
-
-  const results = JSON.parse(jsonMatch[0]);
-  return Array.isArray(results) ? results : [];
-}
-
-/**
- * Call DeepSeek Vision API to extract ALL trades from a screenshot.
- */
 async function extractWithDeepSeek(
   imageBase64: string,
   mimeType: string,
@@ -132,16 +126,26 @@ async function extractWithDeepSeek(
 ): Promise<TradeExtraction[]> {
   const dataUri = `data:${mimeType};base64,${imageBase64}`;
 
-  const prompt = `Extract ALL trades from this trading screenshot. There are 10-15 trades visible. Count each one and do NOT miss any.
+  const prompt = `Extract ALL trade records from this trading screenshot.
 
-Return ONLY valid JSON array. Each trade:
-{"symbol":"PAIR","direction":"LONG/SHORT","entryPrice":num|null,"exitPrice":num|null,"stopLoss":num|null,"targetPrice":num|null,"positionSize":num|null,"pnl":num|null,"tradedAt":"ISO date string"}
+Return ONLY a valid JSON array. Each trade object:
+{
+  "symbol": "PAIR e.g. EURUSD",
+  "direction": "LONG or SHORT",
+  "entryPrice": number or null,
+  "exitPrice": number or null,
+  "stopLoss": number or null,
+  "targetPrice": number or null,
+  "positionSize": number or null,
+  "pnl": number or null,
+  "tradedAt": "ISO date string or null"
+}
 
 Rules:
-- Extract EVERY single trade. Count them all.
+- Extract EVERY visible trade. Do not skip any.
 - If a field is not visible, use null. Never invent values.
-- Direction must be LONG or SHORT.
-- Return ONLY the raw JSON array.`;
+- Direction must be "LONG" or "SHORT".
+- Return ONLY the raw JSON array. No markdown, no explanation.`;
 
   const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
     method: "POST",
@@ -175,20 +179,40 @@ Rules:
 
   // Extract JSON array from response
   const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error("No JSON array found in DeepSeek response");
+  if (!jsonMatch) throw new Error("No JSON array found in AI response");
 
-  const results = JSON.parse(jsonMatch[0]);
-  return Array.isArray(results) ? results : [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    throw new Error("AI returned invalid JSON");
+  }
+
+  // Validate and sanitize
+  const validated = validateExtraction(parsed);
+  if (validated.length === 0) {
+    throw new Error("AI did not return any valid trade records");
+  }
+
+  return validated;
 }
 
 /* ──────────────────────────────
-   POST: Upload screenshot(s) and extract all trades
+   POST — Upload screenshot(s) and extract trades
    ────────────────────────────── */
 
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Rate limit
+  if (!checkUploadRateLimit(session.user.id)) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before uploading more images." },
+      { status: 429 }
+    );
   }
 
   try {
@@ -205,7 +229,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No images provided" }, { status: 400 });
     }
 
-    // Process each image — each one can yield multiple trades
+    if (imageFiles.length > MAX_IMAGES_PER_REQUEST) {
+      return NextResponse.json(
+        { error: `Maximum ${MAX_IMAGES_PER_REQUEST} images per request` },
+        { status: 400 }
+      );
+    }
+
+    // Validate each image
+    for (const file of imageFiles) {
+      if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+        return NextResponse.json(
+          { error: `Unsupported format: ${file.type}. Allowed: JPEG, PNG, WebP, BMP` },
+          { status: 400 }
+        );
+      }
+      if (file.size > MAX_IMAGE_SIZE_BYTES) {
+        return NextResponse.json(
+          { error: `Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max: ${MAX_IMAGE_SIZE_MB}MB` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Process each image
     const results = await Promise.all(
       imageFiles.map(async (imageFile) => {
         const buffer = Buffer.from(await imageFile.arrayBuffer());
@@ -213,7 +260,7 @@ export async function POST(request: NextRequest) {
         const mimeType = imageFile.type;
 
         try {
-          const trades = await extractTradesFromScreenshot(base64, mimeType);
+          const trades = await extractWithDeepSeek(base64, mimeType, process.env.DEEPSEEK_API_KEY!);
           return {
             success: true,
             fileName: imageFile.name,
@@ -224,7 +271,7 @@ export async function POST(request: NextRequest) {
           return {
             success: false,
             fileName: imageFile.name,
-            error: "Extraction failed",
+            error: err instanceof Error ? err.message : "Extraction failed",
             trades: [],
             count: 0,
           };
@@ -260,7 +307,7 @@ export async function POST(request: NextRequest) {
 }
 
 /* ──────────────────────────────
-   PUT: Save a single edited trade
+   PUT — Save a single edited trade
    ────────────────────────────── */
 
 export async function PUT(request: NextRequest) {
@@ -272,8 +319,22 @@ export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
 
+    // Verify account ownership
     let accountId = body.tradingAccountId;
-    if (!accountId) {
+    if (accountId) {
+      const account = await db.query.tradingAccounts.findFirst({
+        where: and(
+          eq(tradingAccounts.id, accountId),
+          eq(tradingAccounts.userId, session.user.id)
+        ),
+      });
+      if (!account) {
+        return NextResponse.json(
+          { error: "Trading account not found or access denied" },
+          { status: 403 }
+        );
+      }
+    } else {
       const defaultAccount = await db.query.tradingAccounts.findFirst({
         where: eq(tradingAccounts.userId, session.user.id),
       });
@@ -308,8 +369,13 @@ export async function PUT(request: NextRequest) {
     else if (hour >= 16 && hour < 21) session_label = "ny-after";
 
     const tradeId = uuidv4();
+    // Only mark CLOSED if there's definitive exit evidence
     const status =
-      body.pnl || body.exitPrice ? "CLOSED" : "OPEN";
+      body.pnl !== undefined && body.pnl !== null
+        ? "CLOSED"
+        : body.exitPrice !== undefined && body.exitPrice !== null
+          ? "CLOSED"
+          : "OPEN";
 
     await db.insert(trades).values({
       id: tradeId,
@@ -356,7 +422,7 @@ export async function PUT(request: NextRequest) {
 }
 
 /* ──────────────────────────────
-   PATCH: Batch save multiple trades
+   PATCH — Batch save multiple trades (user-confirmed)
    ────────────────────────────── */
 
 export async function PATCH(request: NextRequest) {
@@ -373,8 +439,29 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "No trades provided" }, { status: 400 });
     }
 
+    if (trades_data.length > 50) {
+      return NextResponse.json(
+        { error: "Maximum 50 trades per batch" },
+        { status: 400 }
+      );
+    }
+
+    // Verify account ownership
     let accountId = body.tradingAccountId;
-    if (!accountId) {
+    if (accountId) {
+      const account = await db.query.tradingAccounts.findFirst({
+        where: and(
+          eq(tradingAccounts.id, accountId),
+          eq(tradingAccounts.userId, session.user.id)
+        ),
+      });
+      if (!account) {
+        return NextResponse.json(
+          { error: "Trading account not found or access denied" },
+          { status: 403 }
+        );
+      }
+    } else {
       const defaultAccount = await db.query.tradingAccounts.findFirst({
         where: eq(tradingAccounts.userId, session.user.id),
       });
@@ -401,6 +488,12 @@ export async function PATCH(request: NextRequest) {
     for (let i = 0; i < trades_data.length; i++) {
       const t = trades_data[i];
       try {
+        // Validate required fields
+        if (!t.symbol) {
+          errors.push({ index: i, error: "Missing symbol" });
+          continue;
+        }
+
         const tradedAtMs = (t as { tradedAt?: string }).tradedAt
           ? new Date((t as { tradedAt: string }).tradedAt).getTime()
           : Date.now();
@@ -415,8 +508,14 @@ export async function PATCH(request: NextRequest) {
         else if (hour >= 16 && hour < 21) session_label = "ny-after";
 
         const tradeId = uuidv4();
-        const dir: "LONG" | "SHORT" = (t.direction as string)?.toUpperCase() === "SHORT" ? "SHORT" : "LONG";
-        const st = (t as { pnl?: number }).pnl || (t as { exitPrice?: number }).exitPrice ? "CLOSED" : "OPEN";
+        const dir: "LONG" | "SHORT" =
+          (t.direction as string)?.toUpperCase() === "SHORT" ? "SHORT" : "LONG";
+        const st =
+          (t as { pnl?: number }).pnl !== undefined && (t as { pnl?: number }).pnl !== null
+            ? "CLOSED"
+            : (t as { exitPrice?: number }).exitPrice !== undefined && (t as { exitPrice?: number }).exitPrice !== null
+              ? "CLOSED"
+              : "OPEN";
 
         await db.insert(trades).values({
           id: tradeId,

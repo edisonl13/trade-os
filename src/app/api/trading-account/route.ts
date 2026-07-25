@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { tradingAccounts } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { isValidTimezone } from "@/lib/timezone";
 
 /**
  * GET /api/trading-account
@@ -23,7 +24,9 @@ export async function GET() {
     return NextResponse.json(null, { status: 404 });
   }
 
-  return NextResponse.json(account);
+  // Only return safe fields
+  const { id, label, broker, currency, initialBalance, monthlyProfitTarget, timezone } = account;
+  return NextResponse.json({ id, label, broker, currency, initialBalance, monthlyProfitTarget, timezone });
 }
 
 /**
@@ -38,6 +41,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
+    if (body.timezone !== undefined && !isValidTimezone(body.timezone)) {
+      return NextResponse.json({ error: "Invalid IANA timezone" }, { status: 400 });
+    }
     const id = uuidv4();
 
     await db.insert(tradingAccounts).values({
@@ -70,6 +76,7 @@ export async function POST(request: NextRequest) {
 /**
  * PUT /api/trading-account
  * Update the user's default trading account.
+ * Verifies ownership — can only update own account.
  */
 export async function PUT(request: NextRequest) {
   const session = await auth();
@@ -79,24 +86,37 @@ export async function PUT(request: NextRequest) {
 
   try {
     const body = await request.json();
+    if (body.timezone !== undefined && !isValidTimezone(body.timezone)) {
+      return NextResponse.json({ error: "Invalid IANA timezone" }, { status: 400 });
+    }
 
-    // Find the user's account
-    let account = await db.query.tradingAccounts.findFirst({
-      where: eq(tradingAccounts.userId, session.user.id),
-    });
+    // Find account — always restrict to current user's accounts
+    let account: typeof tradingAccounts.$inferSelect | null = null;
 
-    if (!account && body.id) {
-      // Try to find by provided ID
-      account = await db.query.tradingAccounts.findFirst({
-        where: eq(tradingAccounts.id, body.id),
+    if (body.id) {
+      // If a specific ID is provided, verify it belongs to this user
+      const result = await db.query.tradingAccounts.findFirst({
+        where: and(
+          eq(tradingAccounts.id, body.id),
+          eq(tradingAccounts.userId, session.user.id)
+        ),
       });
+      account = result ?? null;
+    }
+
+    if (!account) {
+      // Fall back to the first account owned by this user
+      const result = await db.query.tradingAccounts.findFirst({
+        where: eq(tradingAccounts.userId, session.user.id),
+      });
+      account = result ?? null;
     }
 
     if (!account) {
       // Create one if it doesn't exist
-      const id = body.id ?? uuidv4();
+      const newId = body.id ?? uuidv4();
       await db.insert(tradingAccounts).values({
-        id,
+        id: newId,
         userId: session.user.id,
         label: body.label ?? "Default",
         broker: body.broker ?? "",
@@ -109,13 +129,13 @@ export async function PUT(request: NextRequest) {
       });
 
       const created = await db.query.tradingAccounts.findFirst({
-        where: eq(tradingAccounts.id, id),
+        where: eq(tradingAccounts.id, newId),
       });
 
       return NextResponse.json(created, { status: 201 });
     }
 
-    // Update existing account
+    // Update existing account — always ensure userId matches
     await db
       .update(tradingAccounts)
       .set({
@@ -133,7 +153,12 @@ export async function PUT(request: NextRequest) {
         timezone: body.timezone ?? account.timezone,
         updatedAt: Date.now(),
       })
-      .where(eq(tradingAccounts.id, account.id));
+      .where(
+        and(
+          eq(tradingAccounts.id, account.id),
+          eq(tradingAccounts.userId, session.user.id) // extra safety
+        )
+      );
 
     const updated = await db.query.tradingAccounts.findFirst({
       where: eq(tradingAccounts.id, account.id),

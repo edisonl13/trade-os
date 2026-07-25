@@ -3,6 +3,9 @@
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useI18n } from "@/lib/i18n/provider";
+import type { Locale } from "@/lib/i18n/dictionary";
+import { COMMON_TIMEZONES } from "@/lib/timezone";
 import {
   Settings,
   User,
@@ -43,6 +46,7 @@ interface TradingAccount {
 export default function SettingsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { t, locale, setLocale } = useI18n();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -62,12 +66,9 @@ export default function SettingsPage() {
   const [accountId, setAccountId] = useState<string | null>(null);
 
   // Language & Region
-  const [language, setLanguage] = useState("English");
   const [tzSetting, setTzSetting] = useState("UTC");
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [billingEmail, setBillingEmail] = useState("");
   const [subscriptionPlan, setSubscriptionPlan] = useState("Free");
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [userLevel, setUserLevel] = useState<{ level: number; title: string }>({ level: 1, title: "Rookie" });
 
@@ -99,10 +100,9 @@ export default function SettingsPage() {
           }
 
           if (settingsData) {
-            if (settingsData.locale) setLanguage(settingsData.locale);
+            if (settingsData.locale) setLocale(settingsData.locale as Locale);
             if (settingsData.billingEmail) setBillingEmail(settingsData.billingEmail);
             if (settingsData.subscriptionPlan) setSubscriptionPlan(settingsData.subscriptionPlan);
-            setTwoFactorEnabled(Boolean(settingsData.twoFactorEnabled));
           }
 
           if (levelData) {
@@ -110,11 +110,9 @@ export default function SettingsPage() {
           }
 
           setAccountLoaded(true);
-          setSettingsLoaded(true);
         })
         .catch(() => {
           setAccountLoaded(true);
-          setSettingsLoaded(true);
         });
 
       if (session?.user?.name) setDisplayName(session.user.name);
@@ -145,14 +143,14 @@ export default function SettingsPage() {
       if (res.ok) {
         setAccountId(data.id);
         if (override?.timezone) setTimezone(override.timezone);
-        toast.success("Squad account updated successfully");
+        toast.success(t("settings.accountUpdated"));
         return true;
       }
 
-      toast.error(data.error ?? "Update failed");
+      toast.error(data.error ?? t("error.generic"));
       return false;
     } catch {
-      toast.error("Network error");
+      toast.error(t("settings.networkError"));
       return false;
     } finally {
       setSaving(false);
@@ -161,7 +159,7 @@ export default function SettingsPage() {
 
   const saveProfile = async () => {
     if (!displayName.trim()) {
-      toast.error("Please enter a valid display name.");
+      toast.error(t("settings.invalidName"));
       return;
     }
 
@@ -174,40 +172,37 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        toast.success("Profile saved successfully");
+        toast.success(t("settings.profileSaved"));
         router.refresh();
       } else {
-        toast.error(data.error ?? "Failed to save profile");
+        toast.error(data.error ?? t("error.generic"));
       }
     } catch {
-      toast.error("Network error");
+      toast.error(t("settings.networkError"));
     } finally {
       setProfileSaving(false);
     }
   };
 
-  const saveUserSettings = async () => {
+  const saveUserSettings = async (overrides?: { locale?: Locale; billingEmail?: string }) => {
     setSettingsSaving(true);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          locale: language,
-          billingEmail: billingEmail.trim(),
-          subscriptionPlan,
-          twoFactorEnabled,
+          locale: overrides?.locale ?? locale,
+          billingEmail: overrides?.billingEmail ?? billingEmail.trim(),
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        toast.success("Settings updated successfully");
         return true;
       }
-      toast.error(data.error ?? "Failed to save settings");
+      toast.error(data.error ?? t("error.generic"));
       return false;
     } catch {
-      toast.error("Network error");
+      toast.error(t("settings.networkError"));
       return false;
     } finally {
       setSettingsSaving(false);
@@ -223,11 +218,11 @@ export default function SettingsPage() {
     try {
       const [accSuccess, setSuccess] = await Promise.all([
         saveTradingAccountData({ timezone: tzSetting }),
-        saveUserSettings()
+        saveUserSettings({ locale })
       ]);
       
       if (accSuccess && setSuccess) {
-        toast.success("Region and localization settings synchronized.");
+        toast.success(t("settings.regionUpdated"));
       }
     } finally {
       setRegionSaving(false);
@@ -248,18 +243,18 @@ export default function SettingsPage() {
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <p className="label-sports mb-1">System Configuration</p>
-        <h1 className="text-3xl font-black heading-sports">Broadcast <span className="brand-gradient-text">Settings</span></h1>
+        <p className="label-sports mb-1">{t("common.systemConfiguration")}</p>
+        <h1 className="text-3xl font-black heading-sports">{t("settings.title")}</h1>
       </motion.div>
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value)} className="w-full">
         <TabsList className="mb-8 bg-white/5 p-1.5 h-auto rounded-2xl border border-white/5 gap-2 overflow-x-auto justify-start">
           {[
-            { id: "profile", label: "Profile", icon: User },
-            { id: "trading-account", label: "Trading Account", icon: Wallet },
-            { id: "language", label: "Region", icon: Globe },
-            { id: "security", label: "Security", icon: Shield },
-            { id: "billing", label: "Subscription", icon: CreditCard },
+            { id: "profile", label: t("settings.profile"), icon: User },
+            { id: "trading-account", label: t("settings.tradingAccount"), icon: Wallet },
+            { id: "language", label: t("settings.region"), icon: Globe },
+            { id: "security", label: t("settings.security"), icon: Shield },
+            { id: "billing", label: t("settings.subscription"), icon: CreditCard },
           ].map((tab) => (
             <TabsTrigger 
               key={tab.id}
@@ -287,16 +282,18 @@ export default function SettingsPage() {
                        </div>
                        <div>
                           <h3 className="heading-sports text-xl">{session?.user?.name}</h3>
-                          <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-1">Level {userLevel.level} &middot; {userLevel.title} Member</p>
+                          <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest mt-1">
+                            {t("settings.level")} {userLevel.level} &middot; {t(`level.${userLevel.title}`)} {t("settings.member")}
+                          </p>
                        </div>
-                       <Button variant="outline" className="ml-auto text-[10px] font-black uppercase border-white/5 hover:bg-white/5">Change Avatar</Button>
+                       <Button variant="outline" className="ml-auto text-[10px] font-black uppercase border-white/5 hover:bg-white/5">{t("settings.changeAvatar")}</Button>
                     </div>
 
                     <Separator className="bg-white/5" />
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
-                        <Label className="label-sports ml-1">Official Name</Label>
+                        <Label className="label-sports ml-1">{t("settings.officialName")}</Label>
                         <Input
                           value={displayName}
                           onChange={(e) => setDisplayName(e.target.value)}
@@ -304,7 +301,7 @@ export default function SettingsPage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label className="label-sports ml-1">Email Address</Label>
+                        <Label className="label-sports ml-1">{t("settings.email")}</Label>
                         <Input
                           value={session?.user?.email ?? ""}
                           disabled
@@ -314,9 +311,9 @@ export default function SettingsPage() {
                     </div>
 
                     <div className="flex justify-end gap-3">
-                       <Button variant="ghost" className="text-[10px] font-black uppercase text-muted-foreground" onClick={handleResetProfile}>Reset</Button>
+                       <Button variant="ghost" className="text-[10px] font-black uppercase text-muted-foreground" onClick={handleResetProfile}>{t("settings.reset")}</Button>
                        <Button className="brand-gradient text-white px-8 font-black uppercase glow-primary" onClick={saveProfile} disabled={profileSaving}>
-                         {profileSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Save Profile"}
+                         {profileSaving ? <><Loader2 className="h-4 w-4 animate-spin" />...</> : t("settings.save")}
                        </Button>
                     </div>
                   </div>
@@ -326,10 +323,10 @@ export default function SettingsPage() {
                    <div className="fifa-card p-6 bg-gradient-to-br from-[#3B82F6]/10 to-transparent border-[#3B82F6]/20">
                       <h3 className="heading-sports text-xs flex items-center gap-2">
                          <Shield className="h-4 w-4 text-[#3B82F6]" />
-                         Identity Verified
+                         {t("settings.identityVerified")}
                       </h3>
                       <p className="text-[10px] font-medium text-muted-foreground/60 mt-4 leading-relaxed">
-                         Your account is protected by industry standard encryption. Your trading data is private and only visible to you.
+                         {t("settings.identityDesc")}
                       </p>
                    </div>
 
@@ -339,7 +336,7 @@ export default function SettingsPage() {
                     onClick={() => signOut()}
                    >
                      <LogOut className="mr-2 h-4 w-4" />
-                     Terminate Session
+                     {t("settings.terminate")}
                    </Button>
                 </div>
               </div>
@@ -356,8 +353,8 @@ export default function SettingsPage() {
                         <Wallet className="h-6 w-6 text-[#06B6D4]" />
                      </div>
                      <div>
-                        <h3 className="heading-sports text-lg">Squad <span className="text-[#06B6D4]">Capital</span></h3>
-                        <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">Define your operational bankroll</p>
+                        <h3 className="heading-sports text-lg">{t("settings.tradingAccountLabel")}</h3>
+                        <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">{t("settings.capitalDesc")}</p>
                      </div>
                   </div>
 
@@ -367,31 +364,31 @@ export default function SettingsPage() {
                     <div className="space-y-8">
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                           <div className="space-y-2">
-                            <Label className="label-sports ml-1">Account Label</Label>
+                            <Label className="label-sports ml-1">{t("settings.accountLabel")}</Label>
                             <Input value={accountLabel} onChange={(e) => setAccountLabel(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold" />
                           </div>
                           <div className="space-y-2">
-                            <Label className="label-sports ml-1">Primary Broker</Label>
+                            <Label className="label-sports ml-1">{t("settings.broker")}</Label>
                             <Input value={broker} onChange={(e) => setBroker(e.target.value)} placeholder="e.g. IC MARKETS" className="h-12 bg-white/5 border-white/5 rounded-xl font-bold uppercase placeholder:text-white/10" />
                           </div>
                           <div className="space-y-2">
-                            <Label className="label-sports ml-1">Season Starting Balance</Label>
+                            <Label className="label-sports ml-1">{t("settings.balance")}</Label>
                             <Input type="number" value={initialBalance} onChange={(e) => setInitialBalance(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold text-[#22C55E]" />
                           </div>
                           <div className="space-y-2">
-                            <Label className="label-sports ml-1">Base Currency</Label>
+                            <Label className="label-sports ml-1">{t("settings.currency")}</Label>
                             <Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} maxLength={3} className="h-12 bg-white/5 border-white/5 rounded-xl font-black tracking-widest" />
                           </div>
                           <div className="space-y-2">
-                            <Label className="label-sports ml-1">Monthly Profit Target</Label>
+                            <Label className="label-sports ml-1">{t("settings.monthlyTarget")}</Label>
                             <Input type="number" value={monthlyProfitTarget} onChange={(e) => setMonthlyProfitTarget(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold text-[#3B82F6]" />
                           </div>
                        </div>
 
                        <div className="space-y-2">
-                          <Label className="label-sports ml-1">Operational Timezone</Label>
+                          <Label className="label-sports ml-1">{t("settings.timezone")}</Label>
                           <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold" />
-                          <p className="text-[9px] font-black text-muted-foreground/30 uppercase ml-1">Critical for session intensity mapping (e.g. UTC, New York)</p>
+                          <p className="text-[9px] font-black text-muted-foreground/30 uppercase ml-1">{t("settings.timezoneDesc")}</p>
                        </div>
 
                        <Separator className="bg-white/5" />
@@ -399,14 +396,14 @@ export default function SettingsPage() {
                        <div className="flex justify-between items-center">
                           <div className="flex items-center gap-2">
                              <div className="h-2 w-2 rounded-full bg-[#22C55E] animate-pulse" />
-                             <span className="text-[9px] font-black uppercase text-muted-foreground/60">Live database connection active</span>
+                             <span className="text-[9px] font-black uppercase text-muted-foreground/60">{t("settings.databaseActive")}</span>
                           </div>
                           <Button 
                             className="brand-gradient text-white px-10 h-12 font-black uppercase glow-primary gap-2"
                             onClick={() => saveTradingAccountData()}
                             disabled={saving}
                           >
-                            {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Synchronizing...</> : <><CheckCircle2 className="h-4 w-4" /> Apply Changes</>}
+                            {saving ? <><Loader2 className="h-4 w-4 animate-spin" />...</> : <><CheckCircle2 className="h-4 w-4" /> {t("settings.apply")}</>}
                           </Button>
                        </div>
                     </div>
@@ -425,34 +422,41 @@ export default function SettingsPage() {
                        <Globe className="h-6 w-6 text-[#F59E0B]" />
                     </div>
                     <div>
-                       <h3 className="heading-sports text-lg">Global <span className="text-[#F59E0B]">Localization</span></h3>
-                       <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">Adapt the broadcast to your region</p>
+                       <h3 className="heading-sports text-lg">{t("settings.globalLocalization")}</h3>
+                       <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">{t("settings.localizationDesc")}</p>
                     </div>
                  </div>
 
                   <div className="space-y-6">
                     <div className="space-y-2">
-                      <Label className="label-sports ml-1">Broadcast Language</Label>
+                      <Label className="label-sports ml-1">{t("settings.language")}</Label>
                       <select
-                       value={language}
-                       onChange={(e) => setLanguage(e.target.value)}
+                       value={locale}
+                       onChange={(e) => {
+                         setLocale(e.target.value as Locale);
+                       }}
                        className="h-12 w-full rounded-xl border border-white/5 bg-white/5 px-4 text-sm font-bold text-white"
                       >
-                       <option value="English">English</option>
-                       <option value="English (UK)">English (UK)</option>
-                       <option value="简体中文">简体中文</option>
-                       <option value="繁體中文">繁體中文</option>
-                       <option value="日本語">日本語</option>
+                       <option value="en-US">English</option>
+                       <option value="zh-CN">简体中文</option>
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <Label className="label-sports ml-1">Display Timezone</Label>
-                      <Input value={tzSetting} onChange={(e) => setTzSetting(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold" />
+                      <Label className="label-sports ml-1">{t("settings.displayTz")}</Label>
+                      <select
+                       value={tzSetting}
+                       onChange={(e) => setTzSetting(e.target.value)}
+                       className="h-12 w-full rounded-xl border border-white/5 bg-white/5 px-4 text-sm font-bold text-white"
+                      >
+                       {COMMON_TIMEZONES.map((tz) => (
+                         <option key={tz} value={tz}>{tz}</option>
+                       ))}
+                      </select>
                     </div>
                   </div>
 
                   <Button className="brand-gradient text-white font-black uppercase glow-primary" onClick={saveRegionSettings} disabled={regionSaving}>
-                   {regionSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Update Region Settings"}
+                   {regionSaving ? <><Loader2 className="h-4 w-4 animate-spin" />...</> : t("settings.updateRegion")}
                   </Button>
               </div>
             </motion.div>
@@ -467,26 +471,26 @@ export default function SettingsPage() {
                     <Shield className="h-6 w-6 text-[#EF4444]" />
                   </div>
                   <div>
-                    <h3 className="heading-sports text-lg">Security & Two-Factor</h3>
-                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">Add extra protection to your account</p>
+                    <h3 className="heading-sports text-lg">{t("settings.securityTitle")}</h3>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">{t("settings.securityDesc")}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-black">Two-Factor Authentication</p>
-                      <p className="text-[10px] text-muted-foreground/50">Enable TOTP-based 2FA for your account.</p>
+                      <p className="text-sm font-black">{t("settings.twoFactor")}</p>
+                      <p className="text-[10px] text-muted-foreground/50">{t("settings.twoFactorDesc")}</p>
                     </div>
-                    <label className="switch">
-                      <input type="checkbox" checked={twoFactorEnabled} onChange={(e) => setTwoFactorEnabled(e.target.checked)} />
-                    </label>
+                    <div className="h-9 px-4 rounded-xl bg-white/5 border border-white/5 flex items-center text-[9px] font-black uppercase text-muted-foreground/40">
+                      {t("settings.comingSoon")}
+                    </div>
                   </div>
                 </div>
 
                 <div className="flex justify-end">
-                  <Button className="brand-gradient text-white font-black uppercase" onClick={saveUserSettings} disabled={settingsSaving}>
-                    {settingsSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Save Security"}
+                  <Button className="brand-gradient text-white font-black uppercase" disabled>
+                    {t("settings.comingSoon")}
                   </Button>
                 </div>
               </div>
@@ -502,29 +506,27 @@ export default function SettingsPage() {
                     <CreditCard className="h-6 w-6 text-[#8B5CF6]" />
                   </div>
                   <div>
-                    <h3 className="heading-sports text-lg">Subscription & Billing</h3>
-                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">Manage your billing contact and plan</p>
+                    <h3 className="heading-sports text-lg">{t("settings.billingTitle")}</h3>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-0.5">{t("settings.billingDesc")}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label className="label-sports ml-1">Billing Email</Label>
+                    <Label className="label-sports ml-1">{t("settings.billingEmail")}</Label>
                     <Input value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} className="h-12 bg-white/5 border-white/5 rounded-xl font-bold" />
                   </div>
                   <div className="space-y-2">
-                    <Label className="label-sports ml-1">Subscription Plan</Label>
-                    <select value={subscriptionPlan} onChange={(e) => setSubscriptionPlan(e.target.value)} className="h-12 w-full rounded-xl border border-white/5 bg-white/5 px-4 text-sm font-bold text-white">
-                      <option value="Free">Free</option>
-                      <option value="Pro">Pro</option>
-                      <option value="Enterprise">Enterprise</option>
-                    </select>
+                    <Label className="label-sports ml-1">{t("settings.currentPlan")}</Label>
+                    <div className="h-12 w-full rounded-xl border border-white/5 bg-white/5 px-4 flex items-center text-sm font-bold text-[#22C55E]">
+                      {t("settings.freeComingSoon")}
+                    </div>
                   </div>
                 </div>
 
                 <div className="flex justify-end">
-                  <Button className="brand-gradient text-white font-black uppercase" onClick={saveUserSettings} disabled={settingsSaving}>
-                    {settingsSaving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Save Billing"}
+                  <Button className="brand-gradient text-white font-black uppercase" onClick={() => saveUserSettings({ billingEmail: billingEmail.trim() })} disabled={settingsSaving}>
+                    {settingsSaving ? <><Loader2 className="h-4 w-4 animate-spin" />...</> : t("settings.saveBilling")}
                   </Button>
                 </div>
               </div>

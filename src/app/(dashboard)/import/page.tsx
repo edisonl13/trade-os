@@ -31,6 +31,7 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n/provider";
 
 type ImportStep = "upload" | "mapping" | "results";
 type ScreenshotStep = "upload" | "review" | "saving" | "done";
@@ -71,6 +72,7 @@ const FIELD_LABELS: Record<string, string> = {
    CSV Import Tab
    ============================================================ */
 function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRouter> }) {
+  const { t } = useI18n();
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -89,12 +91,12 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ];
     if (!validTypes.includes(f.type) && !f.name.match(/\.(csv|xls|xlsx)$/i)) {
-      toast.error("Format Invalid. Upload CSV/Excel only.");
+      toast.error(t("import.invalidFormat"));
       return;
     }
     setFile(f);
     setStep("upload");
-  }, []);
+  }, [t]);
 
   const handleImport = async () => {
     if (!file) return;
@@ -108,15 +110,15 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
       const data = await res.json();
 
       if (!res.ok) {
-        toast.error(data.error ?? "Transfer failed");
+        toast.error(data.error ?? t("import.transferFailed"));
         return;
       }
 
       setResult(data);
       setStep("results");
-      toast.success(`Broadcasting ${data.inserted} new trades`);
+      toast.success(t("import.importedCount", String(data.inserted)));
     } catch {
-      toast.error("Link error. Retry.");
+      toast.error(t("error.network"));
     } finally {
       setLoading(false);
     }
@@ -130,22 +132,22 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
             <CheckCircle2 className="h-10 w-10 text-[#10B981]" />
           </div>
           <div className="space-y-2">
-            <h2 className="text-2xl font-black heading-sports">Transfer <span className="text-[#22C55E]">Successful</span></h2>
+            <h2 className="text-2xl font-black heading-sports">{t("import.success")}</h2>
             <p className="text-muted-foreground text-sm uppercase font-bold tracking-widest">{file?.name}</p>
           </div>
           <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
             <div className="bg-white/5 rounded-2xl p-4 border border-white/5">
               <p className="text-2xl font-black heading-sports text-[#22C55E]">{result.inserted}</p>
-              <p className="text-[9px] font-black text-muted-foreground/40 uppercase">Imported</p>
+              <p className="text-[9px] font-black text-muted-foreground/40 uppercase">{t("import.imported")}</p>
             </div>
             <div className="bg-white/5 rounded-2xl p-4 border border-white/5">
               <p className="text-2xl font-black heading-sports text-white/40">{result.skipped}</p>
-              <p className="text-[9px] font-black text-muted-foreground/40 uppercase">Duplicates</p>
+              <p className="text-[9px] font-black text-muted-foreground/40 uppercase">{t("import.duplicates")}</p>
             </div>
           </div>
           <div className="flex gap-3 w-full max-w-sm">
-            <Button variant="outline" className="flex-1 border-white/5 font-black uppercase rounded-xl h-12" onClick={() => { setFile(null); setStep("upload"); }}>Reset</Button>
-            <Button className="flex-1 brand-gradient text-white font-black uppercase rounded-xl h-12 glow-primary" onClick={() => navRouter.push("/")}>Live View</Button>
+            <Button variant="outline" className="flex-1 border-white/5 font-black uppercase rounded-xl h-12" onClick={() => { setFile(null); setStep("upload"); }}>{t("import.reset")}</Button>
+            <Button className="flex-1 brand-gradient text-white font-black uppercase rounded-xl h-12 glow-primary" onClick={() => navRouter.push("/")}>{t("import.liveView")}</Button>
           </div>
         </div>
       </motion.div>
@@ -169,8 +171,8 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
             <FileSpreadsheet className={cn("h-10 w-10", dragOver ? "text-[#3B82F6]" : "text-muted-foreground/40")} />
           </div>
           <div className="text-center space-y-2">
-            <h3 className="text-xl font-black heading-sports">Drop <span className="text-[#3B82F6]">Master Feed</span></h3>
-            <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">CSV, XLS, XLSX formats supported</p>
+            <h3 className="text-xl font-black heading-sports">{t("import.dropCsv")}</h3>
+            <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">{t("import.csvFormats")}</p>
           </div>
           <input type="file" accept=".csv,.xls,.xlsx" className="hidden" id="csv-upload" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileDrop(f); }} />
         </div>
@@ -181,16 +183,16 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
                  <Database className="h-8 w-8 text-[#3B82F6]" />
               </div>
               <div>
-                 <h3 className="heading-sports text-lg">Process <span className="text-[#3B82F6]">Data</span></h3>
+                 <h3 className="heading-sports text-lg">{t("import.processData")}</h3>
                  <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">{file.name} &middot; {(file.size / 1024).toFixed(1)} KB</p>
               </div>
-              <Badge className="ml-auto bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/20 uppercase font-black text-[9px] px-3 py-1">Ready for Sync</Badge>
+               <Badge className="ml-auto bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/20 uppercase font-black text-[9px] px-3 py-1">{t("import.ready")}</Badge>
            </div>
            
            <div className="flex gap-4">
-              <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={() => setFile(null)}>Cancel</Button>
+               <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={() => setFile(null)}>{t("import.cancel")}</Button>
               <Button className="h-14 flex-[2] brand-gradient text-white font-black uppercase glow-primary" onClick={handleImport} disabled={loading}>
-                 {loading ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Synchronizing...</> : <><Upload className="mr-2 h-5 w-5" /> Start Transmission</>}
+                  {loading ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t("import.synchronizing")}</> : <><Upload className="mr-2 h-5 w-5" /> {t("import.uploadBtn")}</>}
               </Button>
            </div>
         </motion.div>
@@ -204,6 +206,7 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
    ============================================================ */
 function ScreenshotImportTab() {
   const router = useRouter();
+  const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<ScreenshotStep>("upload");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -211,22 +214,7 @@ function ScreenshotImportTab() {
   const [tradesList, setTradesList] = useState<Record<string, string>[]>([]);
   const [checkedTrades, setCheckedTrades] = useState<Set<number>>(new Set());
 
-  useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith("image/")) {
-          const file = item.getAsFile();
-          if (file) handleImageFile(file);
-        }
-      }
-    };
-    window.addEventListener("paste", handlePaste);
-    return () => window.removeEventListener("paste", handlePaste);
-  }, []);
-
-  const handleImageFile = (file: File) => {
+  const handleImageFile = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => setImagePreview(e.target?.result as string);
     reader.readAsDataURL(file);
@@ -242,25 +230,46 @@ function ScreenshotImportTab() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
-        let trades: any[] = data.extraction ? [data.extraction] : (data.results?.flatMap((r: any) => r.trades) ?? []);
-        if (trades.length === 0) throw new Error("No trade signals detected");
+        const results = data.results as Array<{ trades?: ExtractionResult[] }> | undefined;
+        const extractedTrades: ExtractionResult[] = data.extraction
+          ? [data.extraction as ExtractionResult]
+          : (results?.flatMap((result) => result.trades ?? []) ?? []);
+        if (extractedTrades.length === 0) throw new Error(t("import.noSignals"));
 
-        const fields = trades.map(t => {
+        const fields = extractedTrades.map((trade) => {
            const f: Record<string, string> = {};
-           Object.keys(FIELD_LABELS).forEach(k => { if(t[k] !== undefined && t[k] !== null) f[k] = String(t[k]); });
+           Object.keys(FIELD_LABELS).forEach((key) => {
+             const value = trade[key as keyof ExtractionResult];
+             if (value !== undefined && value !== null && key !== "fields") f[key] = String(value);
+           });
            return f;
         });
 
         setTradesList(fields);
         setCheckedTrades(new Set(fields.map((_, i) => i)));
-        toast.success(`Optical Intel: ${trades.length} signatures detected`);
+        toast.success(t("import.detectedCount", String(extractedTrades.length)));
       })
-      .catch((err) => {
-        toast.error(err.message);
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : t("error.generic"));
         setStep("upload");
       })
       .finally(() => setLoading(false));
-  };
+  }, [t]);
+
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) handleImageFile(file);
+        }
+      }
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [handleImageFile]);
 
   const handleSaveAll = async () => {
     setStep("saving");
@@ -286,11 +295,11 @@ function ScreenshotImportTab() {
         body: JSON.stringify({ trades: selected }),
       });
 
-      if (!res.ok) throw new Error("Transfer failed");
-      toast.success("Intelligence recorded in master journal");
+      if (!res.ok) throw new Error(t("import.transferFailed"));
+      toast.success(t("import.saved"));
       setStep("done");
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : t("error.generic"));
       setStep("review");
     }
   };
@@ -301,8 +310,8 @@ function ScreenshotImportTab() {
          <div className="h-20 w-20 rounded-3xl bg-[#06B6D4]/10 flex items-center justify-center border border-[#06B6D4]/20 glow-accent">
             <Zap className="h-10 w-10 text-[#06B6D4]" />
          </div>
-         <h2 className="text-2xl font-black heading-sports">Signal <span className="text-[#06B6D4]">Logged</span></h2>
-         <Button className="brand-gradient text-white font-black uppercase glow-primary px-10 h-14" onClick={() => router.push("/")}>Return to Base</Button>
+         <h2 className="text-2xl font-black heading-sports">{t("import.saved")}</h2>
+         <Button className="brand-gradient text-white font-black uppercase glow-primary px-10 h-14" onClick={() => router.push("/")}>{t("import.return")}</Button>
       </div>
     );
   }
@@ -318,20 +327,20 @@ function ScreenshotImportTab() {
             <Camera className="h-10 w-10 text-muted-foreground/40" />
           </div>
           <div className="text-center space-y-2">
-            <h3 className="text-xl font-black heading-sports">Visual <span className="text-[#06B6D4]">Analysis</span></h3>
-            <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">Paste Screenshot (Ctrl+V) or click to browse</p>
+            <h3 className="text-xl font-black heading-sports">{t("import.visualAnalysis")}</h3>
+            <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">{t("import.screenshotTab")}</p>
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if(e.target.files?.[0]) handleImageFile(e.target.files[0]); }} />
         </div>
       ) : loading ? (
         <div className="fifa-card p-20 flex flex-col items-center justify-center gap-6">
            <Loader2 className="h-12 w-12 animate-spin text-[#06B6D4]" />
-           <p className="text-[10px] font-black uppercase tracking-widest text-[#06B6D4] animate-pulse">Running Optical Character Intel...</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#06B6D4] animate-pulse">{t("import.analyzing")}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
            <div className="space-y-4">
-              <Label className="label-sports ml-1">Source Intel</Label>
+              <Label className="label-sports ml-1">{t("import.source")}</Label>
               <div className="fifa-card overflow-hidden p-2">
                  <img src={imagePreview!} alt="Feed" className="w-full h-auto rounded-lg grayscale hover:grayscale-0 transition-all duration-500" />
               </div>
@@ -339,8 +348,8 @@ function ScreenshotImportTab() {
 
            <div className="space-y-6">
               <div className="flex items-center justify-between">
-                 <Label className="label-sports ml-1">Extracted Signals ({tradesList.length})</Label>
-                 <Button variant="ghost" className="h-auto p-0 text-[10px] font-black uppercase text-[#06B6D4]" onClick={() => setCheckedTrades(new Set(tradesList.map((_, i) => i)))}>Select All</Button>
+                 <Label className="label-sports ml-1">{t("import.extracted")} ({tradesList.length})</Label>
+                 <Button variant="ghost" className="h-auto p-0 text-[10px] font-black uppercase text-[#06B6D4]" onClick={() => setCheckedTrades(new Set(tradesList.map((_, i) => i)))}>{t("import.selectAll")}</Button>
               </div>
 
               <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
@@ -370,9 +379,9 @@ function ScreenshotImportTab() {
               </div>
 
               <div className="flex gap-4">
-                 <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={() => setStep("upload")}>Abort</Button>
+                 <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={() => setStep("upload")}>{t("import.abort")}</Button>
                  <Button className="h-14 flex-[2] brand-gradient text-white font-black uppercase glow-primary" onClick={handleSaveAll} disabled={checkedTrades.size === 0}>
-                    Save {checkedTrades.size} Signals
+                    {t("import.save")} {checkedTrades.size} {t("import.signals")}
                  </Button>
               </div>
            </div>
@@ -389,6 +398,7 @@ export default function ImportPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("screenshot");
+  const { t } = useI18n();
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
@@ -402,17 +412,17 @@ export default function ImportPage() {
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <p className="label-sports mb-1">Incoming Stream</p>
-        <h1 className="text-3xl font-black heading-sports">Import <span className="brand-gradient-text">Center</span></h1>
+        <p className="label-sports mb-1">{t("common.incomingStream")}</p>
+        <h1 className="text-3xl font-black heading-sports">{t("import.title")}</h1>
       </motion.div>
 
       <Tabs defaultValue="screenshot" value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="mb-10 bg-white/5 p-1.5 h-auto rounded-2xl border border-white/5 gap-2">
            <TabsTrigger value="screenshot" className="rounded-xl px-10 py-4 text-[11px] font-black uppercase tracking-widest data-[state=active]:bg-[#3B82F6] data-[state=active]:text-white transition-all gap-3">
-              <Camera className="h-4 w-4" /> Optical Analysis
+              <Camera className="h-4 w-4" /> {t("import.optical")}
            </TabsTrigger>
            <TabsTrigger value="csv" className="rounded-xl px-10 py-4 text-[11px] font-black uppercase tracking-widest data-[state=active]:bg-[#3B82F6] data-[state=active]:text-white transition-all gap-3">
-              <FileSpreadsheet className="h-4 w-4" /> Master Feed (CSV)
+              <FileSpreadsheet className="h-4 w-4" /> {t("import.csv")}
            </TabsTrigger>
         </TabsList>
 

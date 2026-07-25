@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { trades } from "@/db/schema";
+import { trades, tradingAccounts } from "@/db/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
+import { getWeekdayInTz, getHourInTz, classifySession } from "@/lib/timezone";
 import {
   computeKPI,
-  computeEquityCurve,
+  computeCumulativePnL,
   computeSessionBreakdown,
   computeWeekdayBreakdown,
   computeDirectionBreakdown,
@@ -13,6 +14,7 @@ import {
   computeCalendarData,
   computeAIInsights,
   computeUserLevel,
+  computeKpiTrend,
   type TradeRecord,
 } from "@/lib/analytics";
 
@@ -32,8 +34,20 @@ export async function GET(request: NextRequest) {
     | "month"
     | "quarter"
     | "year";
-  const year = parseInt(searchParams.get("year") ?? String(new Date().getFullYear()));
-  const month = parseInt(searchParams.get("month") ?? String(new Date().getMonth() + 1));
+  const year = parseInt(
+    searchParams.get("year") ?? String(new Date().getFullYear())
+  );
+  const month = parseInt(
+    searchParams.get("month") ?? String(new Date().getMonth() + 1)
+  );
+
+  const account = await db.query.tradingAccounts.findFirst({
+    where: eq(tradingAccounts.userId, session.user.id),
+  });
+
+  // Use the account timezone by default; an explicit query override is only
+  // useful for controlled comparisons.
+  const tz = searchParams.get("tz") ?? account?.timezone ?? "UTC";
 
   // Build conditions
   const conditions = [eq(trades.userId, session.user.id)];
@@ -45,14 +59,42 @@ export async function GET(request: NextRequest) {
     orderBy: (trades, { asc }) => [asc(trades.tradedAt)],
   })) as unknown as TradeRecord[];
 
+  // Re-compute derived time fields at query time so changing the account
+  // timezone also updates existing trades.
+  for (const trade of allTrades) {
+    try {
+      const utcMs = trade.tradedAt;
+      const hour = getHourInTz(utcMs, tz);
+      trade.weekDay = getWeekdayInTz(utcMs, tz);
+      trade.session = classifySession(hour);
+    } catch {
+      // Keep the stored fallback if the account has an invalid legacy timezone.
+    }
+  }
+
+  // Get account's initial balance for drawdown calculation
+  const initialBalance = account?.initialBalance ?? 0;
+
   switch (type) {
     case "kpi": {
-      const kpi = computeKPI(allTrades);
+      const kpi = computeKPI(allTrades, initialBalance);
       return NextResponse.json(kpi);
     }
 
+    case "trends": {
+      const metric = (subset: TradeRecord[], key: "winRate" | "profitFactor" | "avgRR" | "expectancy" | "maxDrawdownPercent") =>
+        computeKPI(subset, initialBalance)[key];
+      return NextResponse.json({
+        winRate: computeKpiTrend(allTrades, (rows) => metric(rows, "winRate"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`),
+        profitFactor: computeKpiTrend(allTrades, (rows) => metric(rows, "profitFactor"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}`),
+        avgRR: computeKpiTrend(allTrades, (rows) => metric(rows, "avgRR"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
+        expectancy: computeKpiTrend(allTrades, (rows) => metric(rows, "expectancy"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
+        maxDrawdown: computeKpiTrend(allTrades, (rows) => metric(rows, "maxDrawdownPercent"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`, false),
+      });
+    }
+
     case "equity": {
-      const curve = computeEquityCurve(allTrades, granularity);
+      const curve = computeCumulativePnL(allTrades, granularity);
       return NextResponse.json(curve);
     }
 
@@ -77,7 +119,7 @@ export async function GET(request: NextRequest) {
     }
 
     case "calendar": {
-      const calendar = computeCalendarData(allTrades, year, month);
+      const calendar = computeCalendarData(allTrades, year, month, tz);
       return NextResponse.json(calendar);
     }
 

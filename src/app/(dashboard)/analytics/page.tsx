@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
+import { toast } from "sonner";
 import {
   BarChart3,
   TrendingUp,
@@ -40,6 +41,7 @@ import {
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { useI18n } from "@/lib/i18n/provider";
 
 /* ──────────────────────────────
    Types
@@ -59,16 +61,16 @@ interface KPIData {
   profitFactor: number | null;
   expectancy: number | null;
   maxDrawdown: number;
-  maxDrawdownPercent: number;
+  maxDrawdownPercent: number | null;
   bestTrade: number | null;
   worstTrade: number | null;
   consecutiveWins: number;
   consecutiveLosses: number;
 }
 
-interface EquityPoint {
+interface CumulativePnLPoint {
   date: string;
-  equity: number;
+  cumulativePnL: number;
   pnl: number;
 }
 
@@ -122,10 +124,11 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function AnalyticsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { t } = useI18n();
 
   const [loading, setLoading] = useState(true);
   const [kpi, setKpi] = useState<KPIData | null>(null);
-  const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
+  const [equityCurve, setEquityCurve] = useState<CumulativePnLPoint[]>([]);
   const [sessions, setSessions] = useState<BreakdownItem[]>([]);
   const [weekdays, setWeekdays] = useState<BreakdownItem[]>([]);
   const [directions, setDirections] = useState<BreakdownItem[]>([]);
@@ -149,10 +152,11 @@ export default function AnalyticsPage() {
       if (dirsRes.ok) setDirections(await dirsRes.json());
     } catch (err) {
       console.error("Analytics fetch error:", err);
+      toast.error(t("error.failed"));
     } finally {
       setLoading(false);
     }
-  }, [equityGranularity]);
+  }, [equityGranularity, t]);
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
@@ -165,10 +169,16 @@ export default function AnalyticsPage() {
   if (status === "loading" || !session) return null;
 
   const hasSufficientData = kpi && kpi.totalTrades >= 1;
+  const sessionLabel = (label: string) => {
+    const key = label.toLowerCase() === "new york" ? "ny" :
+      label.toLowerCase() === "ny afternoon" ? "nyAfter" :
+      label.toLowerCase();
+    return t(`session.${key}`);
+  };
 
   // Chart Mappings
   const sessionChartData = sessions.map((s) => ({
-    name: s.label.toUpperCase(),
+    name: sessionLabel(s.label),
     Trades: s.trades,
     PnL: s.totalPnL,
     "Win Rate": s.winRate ?? 0,
@@ -176,17 +186,20 @@ export default function AnalyticsPage() {
 
   const weekdayOrder = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const weekdayChartData = weekdayOrder
-    .map((day) => weekdays.find((w) => w.label === day))
+    .map((day, index) => {
+      const record = weekdays.find((w) => w.label === day);
+      return record ? { ...record, displayLabel: t(`weekday.${["sun", "mon", "tue", "wed", "thu", "fri", "sat"][index]}`) } : undefined;
+    })
     .filter(Boolean)
     .map((w) => ({
-      name: w!.label.slice(0, 3).toUpperCase(),
+      name: w!.displayLabel,
       Trades: w!.trades,
       PnL: w!.totalPnL,
       "Win Rate": w!.winRate ?? 0,
     }));
 
   const dirPieData = directions.map((d) => ({
-    name: d.label === "LONG" ? "LONGS" : "SHORTS",
+    name: d.label === "LONG" ? t("common.longTrades") : t("common.shortTrades"),
     value: Math.abs(d.totalPnL) || 1,
     pnl: d.totalPnL,
     trades: d.trades,
@@ -201,24 +214,28 @@ export default function AnalyticsPage() {
         className="flex items-center justify-between"
       >
         <div>
-          <p className="label-sports mb-1">Squad Intelligence</p>
-          <h1 className="text-3xl font-black heading-sports">Deep <span className="brand-gradient-text">Analytics</span></h1>
+          <p className="label-sports mb-1">{t("common.intelligence")}</p>
+          <h1 className="text-3xl font-black heading-sports">{t("analytics.title")}</h1>
         </div>
         <div className="flex gap-2 bg-white/5 p-1 rounded-xl border border-white/5">
            <Zap className="h-4 w-4 text-[#06B6D4] ml-2 mt-2" />
-           <p className="text-[10px] font-bold text-white/60 p-2 uppercase">AI Powered Insights Engine Active</p>
+           <p className="text-[10px] font-bold text-white/60 p-2 uppercase">{t("analytics.engineActive")}</p>
         </div>
       </motion.div>
 
-      {!hasSufficientData ? (
+      {loading ? (
+        <div className="flex items-center justify-center py-32">
+          <Loader2 className="h-12 w-12 animate-spin text-[#2563EB]" />
+        </div>
+      ) : !hasSufficientData ? (
         <div className="fifa-card p-20 flex flex-col items-center justify-center text-center gap-6">
           <BarChart3 className="h-16 w-16 text-muted-foreground/20" />
           <div className="space-y-2">
-            <h2 className="text-2xl font-black heading-sports">Analytics <span className="text-[#2563EB]">Locked</span></h2>
-            <p className="text-muted-foreground text-sm max-w-xs mx-auto">Sync at least one trade to unlock the performance engine and start the broadcast.</p>
+            <h2 className="text-2xl font-black heading-sports">{t("analytics.locked")}</h2>
+            <p className="text-muted-foreground text-sm max-w-xs mx-auto">{t("analytics.lockedDesc")}</p>
           </div>
           <Link href="/import">
-            <Button className="brand-gradient text-white font-black uppercase glow-primary">Import First Feed</Button>
+            <Button className="brand-gradient text-white font-black uppercase glow-primary">{t("analytics.importFirst")}</Button>
           </Link>
         </div>
       ) : (
@@ -230,7 +247,7 @@ export default function AnalyticsPage() {
                 value={tab} 
                 className="rounded-xl px-8 py-3 text-[11px] font-black uppercase tracking-widest data-[state=active]:bg-[#2563EB] data-[state=active]:text-white data-[state=active]:glow-primary transition-all"
               >
-                {tab}
+                {t(`analytics.${tab}`)}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -247,11 +264,11 @@ export default function AnalyticsPage() {
                 {/* KPI Ribbon */}
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
                   {[
-                    { label: "Net P&L", value: formatUSD(kpi?.totalPnL ?? 0), color: (kpi?.totalPnL ?? 0) >= 0 ? "text-[#22C55E]" : "text-[#EF4444]" },
-                    { label: "Win Rate", value: `${kpi?.winRate ?? 0}%`, icon: Target },
-                    { label: "Profit Factor", value: kpi?.profitFactor?.toFixed(2) ?? "—", color: "text-[#06B6D4]" },
-                    { label: "Avg R:R", value: kpi?.avgRR?.toFixed(2) ?? "—" },
-                    { label: "Expectancy", value: `${kpi?.expectancy?.toFixed(2) ?? 0}R` },
+                    { label: t("analytics.netPnl"), value: formatUSD(kpi?.totalPnL ?? 0), color: (kpi?.totalPnL ?? 0) >= 0 ? "text-[#22C55E]" : "text-[#EF4444]" },
+                    { label: t("analytics.winRate"), value: `${kpi?.winRate ?? 0}%`, icon: Target },
+                    { label: t("analytics.profitFactor"), value: kpi?.profitFactor?.toFixed(2) ?? "—", color: "text-[#06B6D4]" },
+                    { label: t("analytics.avgRR"), value: kpi?.avgRR?.toFixed(2) ?? "—" },
+                    { label: t("analytics.expectancy"), value: `${kpi?.expectancy?.toFixed(2) ?? 0}R` },
                   ].map((stat, i) => (
                     <div key={i} className="fifa-card p-5 relative overflow-hidden">
                       <p className="label-sports mb-1">{stat.label}</p>
@@ -264,8 +281,8 @@ export default function AnalyticsPage() {
                 <div className="fifa-card p-8">
                   <div className="flex items-center justify-between mb-8">
                     <div>
-                      <h3 className="heading-sports text-lg">Equity <span className="text-[#2563EB]">Growth</span></h3>
-                      <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-1">Cumulative Season Performance</p>
+                      <h3 className="heading-sports text-lg">{t("analytics.equityGrowth")}</h3>
+                      <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest mt-1">{t("analytics.cumulative")}</p>
                     </div>
                     <div className="flex gap-2 bg-black/20 p-1 rounded-xl border border-white/5">
                       {(["day", "week", "month"] as const).map((g) => (
@@ -277,7 +294,7 @@ export default function AnalyticsPage() {
                             equityGranularity === g ? "bg-[#2563EB] text-white" : "text-muted-foreground/60 hover:text-white"
                           )}
                         >
-                          {g}
+                          {t(`analytics.${g}`)}
                         </button>
                       ))}
                     </div>
@@ -307,8 +324,8 @@ export default function AnalyticsPage() {
                         <Tooltip content={<CustomTooltip />} />
                         <Area
                           type="monotone"
-                          dataKey="equity"
-                          name="Equity"
+                          dataKey="cumulativePnL"
+                          name="Cumulative P&L"
                           stroke="#2563EB"
                           strokeWidth={4}
                           fillOpacity={1}
@@ -323,7 +340,7 @@ export default function AnalyticsPage() {
                 {/* Sub Breakdowns */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   <div className="fifa-card p-8">
-                    <h3 className="heading-sports text-sm mb-8">Directional <span className="text-[#F43F5E]">Bias</span></h3>
+                    <h3 className="heading-sports text-sm mb-8">{t("analytics.directionalBias")}</h3>
                     <div className="flex items-center gap-12">
                       <div className="h-[200px] w-[200px]">
                         <ResponsiveContainer width="100%" height="100%">
@@ -346,7 +363,9 @@ export default function AnalyticsPage() {
                         {directions.map((d, i) => (
                           <div key={i} className="relative">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{d.label}S</span>
+                              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                                {d.label === "LONG" ? t("common.longTrades") : t("common.shortTrades")}
+                              </span>
                               <span className={cn("text-sm font-black heading-sports", d.totalPnL >= 0 ? "text-[#22C55E]" : "text-[#EF4444]")}>{formatUSD(d.totalPnL)}</span>
                             </div>
                             <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
@@ -357,7 +376,7 @@ export default function AnalyticsPage() {
                                />
                             </div>
                             <div className="flex justify-between mt-2 text-[9px] font-bold text-muted-foreground/40 uppercase">
-                              <span>Win Rate</span>
+                              <span>{t("analytics.winRate")}</span>
                               <span>{d.winRate}%</span>
                             </div>
                           </div>
@@ -367,7 +386,7 @@ export default function AnalyticsPage() {
                   </div>
 
                   <div className="fifa-card p-8">
-                    <h3 className="heading-sports text-sm mb-8">Session <span className="text-[#06B6D4]">Impact</span></h3>
+                    <h3 className="heading-sports text-sm mb-8">{t("analytics.sessionImpact")}</h3>
                     <div className="h-[200px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={sessionChartData}>
@@ -398,35 +417,39 @@ export default function AnalyticsPage() {
               >
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
                   <div className="fifa-card p-6 border-l-4 border-red-500">
-                    <p className="label-sports mb-1">Max Drawdown</p>
+                    <p className="label-sports mb-1">{t("analytics.maxDrawdown")}</p>
                     <p className="text-3xl font-black heading-sports text-[#EF4444]">{formatUSD(-kpi!.maxDrawdown)}</p>
-                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">{kpi!.maxDrawdownPercent.toFixed(1)}% Decline</p>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">
+                      {kpi!.maxDrawdownPercent === null
+                        ? t("kpi.setBalance")
+                        : `${kpi!.maxDrawdownPercent.toFixed(1)}% ${t("analytics.decline")}`}
+                    </p>
                   </div>
                   <div className="fifa-card p-6 border-l-4 border-emerald-500">
-                    <p className="label-sports mb-1">Best Trade</p>
+                    <p className="label-sports mb-1">{t("analytics.bestTrade")}</p>
                     <p className="text-3xl font-black heading-sports text-[#22C55E]">{formatUSD(kpi!.bestTrade ?? 0)}</p>
-                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">Single Match High</p>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">{t("analytics.singleHigh")}</p>
                   </div>
                   <div className="fifa-card p-6">
-                    <p className="label-sports mb-1">Total Fees</p>
+                    <p className="label-sports mb-1">{t("analytics.totalFees")}</p>
                     <p className="text-3xl font-black heading-sports text-white/40">{formatUSD(-kpi!.totalFees)}</p>
-                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">Broker Commission</p>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">{t("analytics.commission")}</p>
                   </div>
                   <div className="fifa-card p-6">
-                    <p className="label-sports mb-1">Worst Trade</p>
+                    <p className="label-sports mb-1">{t("analytics.worstTrade")}</p>
                     <p className="text-3xl font-black heading-sports text-[#EF4444]">{formatUSD(kpi!.worstTrade ?? 0)}</p>
-                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">Single Match Low</p>
+                    <p className="text-[10px] font-bold text-muted-foreground/40 uppercase mt-2">{t("analytics.singleLow")}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                    <div className="fifa-card p-8 space-y-8">
-                      <h3 className="heading-sports text-sm">Consecutive <span className="text-[#2563EB]">Streaks</span></h3>
+                      <h3 className="heading-sports text-sm">{t("analytics.consecutive")}</h3>
                       <div className="flex gap-12">
                         <div className="space-y-2">
                            <div className="flex items-center gap-2 text-[#22C55E]">
                               <ArrowUpRight className="h-5 w-5" />
-                              <span className="text-[10px] font-black uppercase">Longest Win</span>
+                              <span className="text-[10px] font-black uppercase">{t("analytics.longestWin")}</span>
                            </div>
                            <p className="text-6xl font-black heading-sports">{kpi?.consecutiveWins}</p>
                         </div>
@@ -434,14 +457,14 @@ export default function AnalyticsPage() {
                         <div className="space-y-2">
                            <div className="flex items-center gap-2 text-[#EF4444]">
                               <ArrowDownRight className="h-5 w-5" />
-                              <span className="text-[10px] font-black uppercase">Longest Loss</span>
+                              <span className="text-[10px] font-black uppercase">{t("analytics.longestLoss")}</span>
                            </div>
                            <p className="text-6xl font-black heading-sports">{kpi?.consecutiveLosses}</p>
                         </div>
                       </div>
                    </div>
                    <div className="fifa-card p-8">
-                      <h3 className="heading-sports text-sm mb-8">P&L <span className="text-[#06B6D4]">Distribution</span></h3>
+                      <h3 className="heading-sports text-sm mb-8">{t("analytics.pnlDistribution")}</h3>
                       <div className="h-[180px]">
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={equityCurve.slice(-20)}>
@@ -472,7 +495,7 @@ export default function AnalyticsPage() {
                 className="space-y-8"
               >
                 <div className="fifa-card p-8">
-                   <h3 className="heading-sports text-sm mb-8">Weekday <span className="text-[#2563EB]">Performance Matrix</span></h3>
+                   <h3 className="heading-sports text-sm mb-8">{t("analytics.weekdayMatrix")}</h3>
                    <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={weekdayChartData}>
@@ -490,7 +513,7 @@ export default function AnalyticsPage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                    <div className="fifa-card p-6">
-                      <h3 className="heading-sports text-[10px] mb-4 text-muted-foreground">Detailed Breakdown</h3>
+                      <h3 className="heading-sports text-[10px] mb-4 text-muted-foreground">{t("analytics.detailedBreakdown")}</h3>
                       <div className="space-y-3">
                         {weekdayChartData.map((d, idx) => (
                           <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
@@ -506,11 +529,11 @@ export default function AnalyticsPage() {
                    </div>
 
                    <div className="fifa-card p-6">
-                      <h3 className="heading-sports text-[10px] mb-4 text-muted-foreground">Session Intel</h3>
+                      <h3 className="heading-sports text-[10px] mb-4 text-muted-foreground">{t("analytics.sessionIntel")}</h3>
                       <div className="space-y-3">
                          {sessions.map((s, i) => (
                            <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
-                              <span className="font-black heading-sports text-xs uppercase">{s.label}</span>
+                               <span className="font-black heading-sports text-xs uppercase">{sessionLabel(s.label)}</span>
                               <div className="flex gap-6 items-center">
                                  <span className={cn("text-xs font-black", s.totalPnL >= 0 ? "text-[#22C55E]" : "text-[#EF4444]")}>{formatUSD(s.totalPnL)}</span>
                                  <span className="text-[10px] font-black text-white/40">{s.winRate}% WR</span>

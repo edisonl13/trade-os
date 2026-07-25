@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AdapterAccount } from "next-auth/adapters";
 
 /* ──────────────────────────────────────────────
@@ -190,3 +190,22 @@ export const csvMappings = sqliteTable("csv_mapping", {
   mapping: text("mapping").notNull(),
   createdAt: integer("createdAt", { mode: "number" }).notNull(),
 });
+
+/**
+ * Login verification codes for email-based authentication.
+ */
+export const loginCodes = sqliteTable(
+  "login_code",
+  {
+    id: text("id").primaryKey().notNull(),
+    email: text("email").notNull(),
+    code: text("code").notNull(),
+    expiresAt: integer("expiresAt", { mode: "number" }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    usedAt: integer("usedAt", { mode: "number" }),
+    createdAt: integer("createdAt", { mode: "number" }).notNull(),
+  },
+  (table) => ({
+    emailIdx: uniqueIndex("login_code_email_idx").on(table.email, table.createdAt),
+  })
+);

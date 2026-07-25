@@ -18,19 +18,24 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { useI18n } from "@/lib/i18n/provider";
 
-const navItems = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/import", label: "Import Center", icon: Upload },
-  { href: "/trades", label: "Trade Journal", icon: ScrollText },
-  { href: "/calendar", label: "Performance Calendar", icon: Calendar },
-  { href: "/analytics", label: "Deep Analytics", icon: BarChart3 },
-  { href: "/settings", label: "Configuration", icon: Settings },
-];
+function useNavItems(t: (key: string) => string) {
+  return [
+    { href: "/", label: t("nav.overview"), icon: LayoutDashboard },
+    { href: "/import", label: t("nav.import"), icon: Upload },
+    { href: "/trades", label: t("nav.trades"), icon: ScrollText },
+    { href: "/calendar", label: t("nav.calendar"), icon: Calendar },
+    { href: "/analytics", label: t("nav.analytics"), icon: BarChart3 },
+    { href: "/settings", label: t("nav.settings"), icon: Settings },
+  ];
+}
 
 export function Navigation() {
   const pathname = usePathname();
   const { data: session } = useSession();
+  const { t } = useI18n();
+  const navItems = useNavItems(t);
 
   const userInitials = session?.user?.name
     ? session.user.name
@@ -56,14 +61,14 @@ export function Navigation() {
             TRADE<span className="text-[#2563EB]">//</span>OS
           </h1>
           <p className="text-[9px] font-black uppercase tracking-[0.35em] text-[#A5B4FC] mt-1">
-            Sidebar Navigation
+            {t("common.navigation")}
           </p>
         </div>
       </div>
 
       {/* Navigation Links */}
       <nav className="flex-1 space-y-1.5 px-4 py-10 relative">
-        <div className="label-sports px-4 mb-4 opacity-30 text-[8px]">Navigation</div>
+        <div className="label-sports px-4 mb-4 opacity-30 text-[8px]">{t("common.navigation")}</div>
         {navItems.map((item, idx) => {
           const isActive = pathname === item.href;
           const Icon = item.icon;
@@ -101,7 +106,7 @@ export function Navigation() {
           );
         })}
 
-        <div className="label-sports px-4 mt-10 mb-4 opacity-30 text-[8px]">Intelligence</div>
+        <div className="label-sports px-4 mt-10 mb-4 opacity-30 text-[8px]">{t("common.intelligence")}</div>
         <motion.div
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -109,8 +114,8 @@ export function Navigation() {
         >
           <div className="group relative flex items-center gap-4 rounded-lg px-4 py-3.5 text-[11px] font-black uppercase tracking-tight text-muted-foreground/20 cursor-not-allowed">
             <Cpu className="h-4.5 w-4.5" />
-            <span>AI Market Pulse</span>
-            <Badge className="absolute right-3 bg-white/5 text-[7px] border-white/5 text-muted-foreground/40 uppercase">Coming Soon</Badge>
+            <span>{t("common.aiMarketPulse")}</span>
+            <Badge className="absolute right-3 bg-white/5 text-[7px] border-white/5 text-muted-foreground/40 uppercase">{t("common.comingSoon")}</Badge>
           </div>
         </motion.div>
       </nav>
@@ -129,19 +134,20 @@ export function Navigation() {
           </Avatar>
           <div className="flex-1 min-w-0">
             <p className="text-[11px] font-black text-white truncate uppercase">
-              {session?.user?.name ?? "Trader"}
+              {session?.user?.name ?? t("common.trader")}
             </p>
             <div className="flex items-center gap-1.5">
                <div className="h-1 w-1 rounded-full bg-[#22C55E]" />
                <p className="text-[8px] font-bold text-[#22C55E] uppercase tracking-wider">
-                 Elite Status
+                 {t("common.eliteStatus")}
                </p>
             </div>
           </div>
           <button
             onClick={() => signOut()}
             className="relative z-10 rounded-lg p-2 text-muted-foreground/30 hover:bg-red-500/10 hover:text-red-400 transition-all"
-            title="Sign out"
+            title={t("common.signOut")}
+            aria-label={t("common.signOut")}
           >
             <LogOut className="h-4 w-4" />
           </button>

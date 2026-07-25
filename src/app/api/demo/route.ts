@@ -34,11 +34,12 @@ export async function POST(request: NextRequest) {
         broker: "Demo Market",
         currency: "USD",
         initialBalance: 10000,
+        monthlyProfitTarget: 0,
         timezone: "UTC",
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
-      demoAccount = { id: accountId, userId: session.user.id, label: "Demo", broker: "Demo Market", currency: "USD", initialBalance: 10000, timezone: "UTC", createdAt: Date.now(), updatedAt: Date.now() };
+      demoAccount = { id: accountId, userId: session.user.id, label: "Demo", broker: "Demo Market", currency: "USD", initialBalance: 10000, monthlyProfitTarget: 0, timezone: "UTC", createdAt: Date.now(), updatedAt: Date.now() };
     }
 
     const importBatch = uuidv4();
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
       await db.insert(trades).values({
         id: uuidv4(),
         userId: session.user.id,
-        tradingAccountId: demoAccount.id,
+        tradingAccountId: demoAccount!.id,
         symbol: t.symbol,
         direction: t.direction,
         entryPrice: t.entryPrice,
@@ -118,7 +119,7 @@ export async function DELETE() {
 
     // Delete all trades in demo account
     await db.delete(trades).where(
-      and(eq(trades.userId, session.user.id), eq(trades.tradingAccountId, demoAccount.id))
+      and(eq(trades.userId, session.user.id), eq(trades.tradingAccountId, demoAccount!.id))
     );
 
     return NextResponse.json({
