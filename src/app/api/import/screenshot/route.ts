@@ -111,35 +111,11 @@ function validateExtraction(data: unknown): TradeExtraction[] {
 }
 
 /* ──────────────────────────────
-   AI Gateway vision extraction
+   Gemini API vision extraction
    ────────────────────────────── */
 
 const VISION_MODEL = "gemini-3.1-flash-lite";
 const MAX_VISION_OUTPUT_TOKENS = 4096;
-
-const TRADE_EXTRACTION_SCHEMA = {
-  type: "array",
-  maxItems: 100,
-  items: {
-    type: "object",
-    properties: {
-      symbol: { type: ["string", "null"] },
-      direction: { type: ["string", "null"], enum: ["LONG", "SHORT", null] },
-      entryPrice: { type: ["number", "null"] },
-      exitPrice: { type: ["number", "null"] },
-      stopLoss: { type: ["number", "null"] },
-      targetPrice: { type: ["number", "null"] },
-      positionSize: { type: ["number", "null"] },
-      pnl: { type: ["number", "null"] },
-      tradedAt: { type: ["string", "null"] },
-    },
-    required: [
-      "symbol", "direction", "entryPrice", "exitPrice", "stopLoss",
-      "targetPrice", "positionSize", "pnl", "tradedAt",
-    ],
-    additionalProperties: false,
-  },
-} as const;
 
 class VisionExtractionError extends Error {
   constructor(
@@ -203,7 +179,6 @@ Rules:
       generationConfig: {
         maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
         responseMimeType: "application/json",
-        responseJsonSchema: TRADE_EXTRACTION_SCHEMA,
         thinkingConfig: {
           thinkingLevel: "minimal",
         },
@@ -213,11 +188,16 @@ Rules:
   });
 
   if (!response.ok) {
+    const providerError = await response.json().catch(() => null);
     console.error(JSON.stringify({
       event: "vision_provider_error",
       provider: "google-gemini",
       model: VISION_MODEL,
       status: response.status,
+      providerStatus: providerError?.error?.status ?? null,
+      providerMessage: typeof providerError?.error?.message === "string"
+        ? providerError.error.message.slice(0, 300)
+        : null,
     }));
     throw new VisionExtractionError("Vision provider request failed", "VISION_UNAVAILABLE");
   }
