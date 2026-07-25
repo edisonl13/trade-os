@@ -21,6 +21,9 @@ const rateLimitMap = new Map<string, { count: number; windowStart: number }>();
 
 function checkUploadRateLimit(userId: string): boolean {
   const now = Date.now();
+  for (const [key, item] of rateLimitMap) {
+    if (now - item.windowStart > RATE_LIMIT_WINDOW) rateLimitMap.delete(key);
+  }
   const entry = rateLimitMap.get(userId);
   if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW) {
     rateLimitMap.set(userId, { count: 1, windowStart: now });
@@ -30,14 +33,6 @@ function checkUploadRateLimit(userId: string): boolean {
   entry.count++;
   return true;
 }
-
-// Periodic cleanup
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitMap) {
-    if (now - entry.windowStart > RATE_LIMIT_WINDOW) rateLimitMap.delete(key);
-  }
-}, 60_000);
 
 /* ──────────────────────────────
    Types
@@ -119,7 +114,32 @@ function validateExtraction(data: unknown): TradeExtraction[] {
    AI Gateway vision extraction
    ────────────────────────────── */
 
-const VISION_MODEL = "google/gemini-2.5-flash";
+const VISION_MODEL = "gemini-3.1-flash-lite";
+const MAX_VISION_OUTPUT_TOKENS = 4096;
+
+const TRADE_EXTRACTION_SCHEMA = {
+  type: "array",
+  maxItems: 100,
+  items: {
+    type: "object",
+    properties: {
+      symbol: { type: ["string", "null"] },
+      direction: { type: ["string", "null"], enum: ["LONG", "SHORT", null] },
+      entryPrice: { type: ["number", "null"] },
+      exitPrice: { type: ["number", "null"] },
+      stopLoss: { type: ["number", "null"] },
+      targetPrice: { type: ["number", "null"] },
+      positionSize: { type: ["number", "null"] },
+      pnl: { type: ["number", "null"] },
+      tradedAt: { type: ["string", "null"] },
+    },
+    required: [
+      "symbol", "direction", "entryPrice", "exitPrice", "stopLoss",
+      "targetPrice", "positionSize", "pnl", "tradedAt",
+    ],
+    additionalProperties: false,
+  },
+} as const;
 
 class VisionExtractionError extends Error {
   constructor(
@@ -131,13 +151,11 @@ class VisionExtractionError extends Error {
   }
 }
 
-async function extractWithVisionGateway(
+async function extractWithGemini(
   imageBase64: string,
   mimeType: string,
-  authToken: string,
+  apiKey: string,
 ): Promise<TradeExtraction[]> {
-  const dataUri = `data:${mimeType};base64,${imageBase64}`;
-
   const prompt = `Extract ALL trade records from this trading screenshot.
 
 Return ONLY a valid JSON array. Each trade object:
@@ -157,27 +175,39 @@ Rules:
 - Extract EVERY visible trade. Do not skip any.
 - If a field is not visible, use null. Never invent values.
 - Direction must be "LONG" or "SHORT".
-- Return ONLY the raw JSON array. No markdown, no explanation.`;
+- Return only fields visible in the image.`;
 
-  const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`,
+    {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
+      "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
-      model: VISION_MODEL,
-      messages: [
+      contents: [
         {
           role: "user",
-          content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: dataUri } },
+          parts: [
+            {
+              inlineData: {
+                mimeType,
+                data: imageBase64,
+              },
+            },
+            { text: prompt },
           ],
         },
       ],
-      max_tokens: 8192,
-      temperature: 0.01,
+      generationConfig: {
+        maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
+        responseMimeType: "application/json",
+        responseJsonSchema: TRADE_EXTRACTION_SCHEMA,
+        thinkingConfig: {
+          thinkingLevel: "minimal",
+        },
+      },
     }),
     signal: AbortSignal.timeout(45_000),
   });
@@ -185,16 +215,17 @@ Rules:
   if (!response.ok) {
     console.error(JSON.stringify({
       event: "vision_provider_error",
-      provider: "vercel-ai-gateway",
+      provider: "google-gemini",
       model: VISION_MODEL,
       status: response.status,
-      providerRequestId: response.headers.get("x-request-id"),
     }));
     throw new VisionExtractionError("Vision provider request failed", "VISION_UNAVAILABLE");
   }
 
   const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content ?? "";
+  const text = data?.candidates?.[0]?.content?.parts
+    ?.map((part: { text?: string }) => part.text ?? "")
+    .join("") ?? "";
 
   // Extract JSON array from response
   const jsonMatch = text.match(/\[[\s\S]*\]/);
@@ -239,8 +270,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const visionAuthToken = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
-    if (!visionAuthToken) {
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
       console.error(JSON.stringify({
         event: "vision_configuration_error",
         route: "/api/import/screenshot",
@@ -296,7 +327,7 @@ export async function POST(request: NextRequest) {
         const mimeType = imageFile.type;
 
         try {
-          const trades = await extractWithVisionGateway(base64, mimeType, visionAuthToken);
+          const trades = await extractWithGemini(base64, mimeType, geminiApiKey);
           return {
             success: true,
             fileName: imageFile.name,
