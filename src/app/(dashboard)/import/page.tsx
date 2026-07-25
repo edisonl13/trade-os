@@ -228,7 +228,16 @@ function ScreenshotImportTab() {
     fetch("/api/import/screenshot", { method: "POST", body: formData })
       .then(async (res) => {
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
+        if (!res.ok) {
+          const errorKey = data.code === "VISION_NOT_CONFIGURED"
+            ? "import.visionNotConfigured"
+            : data.code === "VISION_UNAVAILABLE"
+              ? "import.visionUnavailable"
+              : data.code === "NO_SIGNALS"
+                ? "import.noSignals"
+                : "error.generic";
+          throw new Error(t(errorKey));
+        }
 
         const results = data.results as Array<{ trades?: ExtractionResult[] }> | undefined;
         const extractedTrades: ExtractionResult[] = data.extraction

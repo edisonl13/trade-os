@@ -116,13 +116,25 @@ function validateExtraction(data: unknown): TradeExtraction[] {
 }
 
 /* ──────────────────────────────
-   DeepSeek Vision extraction
+   AI Gateway vision extraction
    ────────────────────────────── */
 
-async function extractWithDeepSeek(
+const VISION_MODEL = "google/gemini-2.5-flash";
+
+class VisionExtractionError extends Error {
+  constructor(
+    message: string,
+    readonly code: "VISION_NOT_CONFIGURED" | "VISION_UNAVAILABLE" | "NO_SIGNALS",
+  ) {
+    super(message);
+    this.name = "VisionExtractionError";
+  }
+}
+
+async function extractWithVisionGateway(
   imageBase64: string,
   mimeType: string,
-  apiKey: string
+  authToken: string,
 ): Promise<TradeExtraction[]> {
   const dataUri = `data:${mimeType};base64,${imageBase64}`;
 
@@ -147,14 +159,14 @@ Rules:
 - Direction must be "LONG" or "SHORT".
 - Return ONLY the raw JSON array. No markdown, no explanation.`;
 
-  const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+  const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${authToken}`,
     },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      model: VISION_MODEL,
       messages: [
         {
           role: "user",
@@ -167,11 +179,18 @@ Rules:
       max_tokens: 8192,
       temperature: 0.01,
     }),
+    signal: AbortSignal.timeout(45_000),
   });
 
   if (!response.ok) {
-    const errText = await response.text().catch(() => "");
-    throw new Error(`DeepSeek API error: ${response.status} ${errText}`);
+    console.error(JSON.stringify({
+      event: "vision_provider_error",
+      provider: "vercel-ai-gateway",
+      model: VISION_MODEL,
+      status: response.status,
+      providerRequestId: response.headers.get("x-request-id"),
+    }));
+    throw new VisionExtractionError("Vision provider request failed", "VISION_UNAVAILABLE");
   }
 
   const data = await response.json();
@@ -179,19 +198,21 @@ Rules:
 
   // Extract JSON array from response
   const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error("No JSON array found in AI response");
+  if (!jsonMatch) {
+    throw new VisionExtractionError("No trade records found in the image", "NO_SIGNALS");
+  }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonMatch[0]);
   } catch {
-    throw new Error("AI returned invalid JSON");
+    throw new VisionExtractionError("Vision provider returned invalid data", "VISION_UNAVAILABLE");
   }
 
   // Validate and sanitize
   const validated = validateExtraction(parsed);
   if (validated.length === 0) {
-    throw new Error("AI did not return any valid trade records");
+    throw new VisionExtractionError("No trade records found in the image", "NO_SIGNALS");
   }
 
   return validated;
@@ -202,6 +223,8 @@ Rules:
    ────────────────────────────── */
 
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
+  const requestId = request.headers.get("x-vercel-id") ?? uuidv4();
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -216,6 +239,19 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const visionAuthToken = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
+    if (!visionAuthToken) {
+      console.error(JSON.stringify({
+        event: "vision_configuration_error",
+        route: "/api/import/screenshot",
+        requestId,
+      }));
+      return NextResponse.json(
+        { error: "Image analysis is not configured", code: "VISION_NOT_CONFIGURED" },
+        { status: 503 },
+      );
+    }
+
     const formData = await request.formData();
     const imageFiles: File[] = [];
 
@@ -260,7 +296,7 @@ export async function POST(request: NextRequest) {
         const mimeType = imageFile.type;
 
         try {
-          const trades = await extractWithDeepSeek(base64, mimeType, process.env.DEEPSEEK_API_KEY!);
+          const trades = await extractWithVisionGateway(base64, mimeType, visionAuthToken);
           return {
             success: true,
             fileName: imageFile.name,
@@ -271,7 +307,7 @@ export async function POST(request: NextRequest) {
           return {
             success: false,
             fileName: imageFile.name,
-            error: err instanceof Error ? err.message : "Extraction failed",
+            error: err instanceof VisionExtractionError ? err.code : "VISION_UNAVAILABLE",
             trades: [],
             count: 0,
           };
@@ -281,6 +317,33 @@ export async function POST(request: NextRequest) {
 
     // Flatten all trades from all images
     const allTrades = results.flatMap((r) => r.trades ?? []);
+    const failedResults = results.filter((result) => !result.success);
+
+    console.info(JSON.stringify({
+      event: "vision_extraction_complete",
+      route: "/api/import/screenshot",
+      requestId,
+      model: VISION_MODEL,
+      imageCount: imageFiles.length,
+      tradeCount: allTrades.length,
+      failedImageCount: failedResults.length,
+      durationMs: Date.now() - startedAt,
+    }));
+
+    if (failedResults.length === results.length) {
+      const code = failedResults.every((result) => result.error === "NO_SIGNALS")
+        ? "NO_SIGNALS"
+        : "VISION_UNAVAILABLE";
+      return NextResponse.json(
+        {
+          error: code === "NO_SIGNALS"
+            ? "No trade records found in the image"
+            : "Image analysis is temporarily unavailable",
+          code,
+        },
+        { status: code === "NO_SIGNALS" ? 422 : 502 },
+      );
+    }
 
     // Backward compatibility: if single image and single trade, return extraction directly
     if (imageFiles.length === 1 && results[0]?.success && allTrades.length === 1) {
@@ -298,7 +361,13 @@ export async function POST(request: NextRequest) {
       results,
     });
   } catch (error) {
-    console.error("Screenshot import error:", error);
+    console.error(JSON.stringify({
+      event: "vision_extraction_error",
+      route: "/api/import/screenshot",
+      requestId,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }));
     return NextResponse.json(
       { error: "Failed to process screenshots" },
       { status: 500 }
