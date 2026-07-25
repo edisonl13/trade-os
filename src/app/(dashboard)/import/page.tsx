@@ -211,10 +211,16 @@ function ScreenshotImportTab() {
   const [step, setStep] = useState<ScreenshotStep>("upload");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [tradesList, setTradesList] = useState<Record<string, string>[]>([]);
   const [checkedTrades, setCheckedTrades] = useState<Set<number>>(new Set());
 
   const handleImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error(t("import.invalidImage"));
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => setImagePreview(e.target?.result as string);
     reader.readAsDataURL(file);
@@ -329,17 +335,59 @@ function ScreenshotImportTab() {
     <div className="space-y-6">
       {step === "upload" ? (
         <div
-          className="fifa-card p-20 flex flex-col items-center justify-center border-2 border-dashed border-white/5 hover:border-white/10 transition-all cursor-pointer group"
-          onClick={() => fileInputRef.current?.click()}
+          className={cn(
+            "fifa-card relative p-20 flex flex-col items-center justify-center border-2 border-dashed transition-all cursor-pointer group",
+            dragOver
+              ? "border-[#3B82F6] bg-[#3B82F6]/5"
+              : "border-white/5 hover:border-[#3B82F6]/50 hover:bg-white/[0.02]",
+          )}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setDragOver(true);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            setDragOver(true);
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+              setDragOver(false);
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragOver(false);
+            const file = event.dataTransfer.files[0];
+            if (file) handleImageFile(file);
+          }}
         >
-          <div className="mb-6 h-20 w-20 rounded-3xl bg-white/5 flex items-center justify-center border border-white/10 group-hover:scale-110 transition-transform">
-            <Camera className="h-10 w-10 text-muted-foreground/40" />
+          <input
+            ref={fileInputRef}
+            id="screenshot-upload"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/bmp"
+            aria-label={t("import.chooseImage")}
+            className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              if (file) handleImageFile(file);
+              event.currentTarget.value = "";
+            }}
+          />
+          <div className="pointer-events-none mb-6 h-20 w-20 rounded-3xl bg-white/5 flex items-center justify-center border border-white/10 group-hover:scale-110 transition-transform">
+            <Camera className={cn("h-10 w-10", dragOver ? "text-[#3B82F6]" : "text-muted-foreground/40")} />
           </div>
-          <div className="text-center space-y-2">
+          <div className="pointer-events-none text-center space-y-3">
             <h3 className="text-xl font-black heading-sports">{t("import.visualAnalysis")}</h3>
             <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">{t("import.screenshotTab")}</p>
+            <span className="inline-flex rounded-lg border border-[#3B82F6]/30 bg-[#3B82F6]/10 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-[#60A5FA]">
+              {t("import.chooseImage")}
+            </span>
+            <p className="text-[9px] font-semibold text-muted-foreground/35">
+              {t("import.aiDisclosure")}
+            </p>
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if(e.target.files?.[0]) handleImageFile(e.target.files[0]); }} />
         </div>
       ) : loading ? (
         <div className="fifa-card p-20 flex flex-col items-center justify-center gap-6">
