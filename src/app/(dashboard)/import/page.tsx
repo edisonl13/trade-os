@@ -237,6 +237,8 @@ function ScreenshotImportTab() {
         if (!res.ok) {
           const errorKey = data.code === "VISION_NOT_CONFIGURED"
             ? "import.visionNotConfigured"
+            : data.code === "VISION_INVALID_KEY"
+              ? "import.visionInvalidKey"
             : data.code === "VISION_UNAVAILABLE"
               ? "import.visionUnavailable"
               : data.code === "NO_SIGNALS"

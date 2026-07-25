@@ -120,7 +120,7 @@ const MAX_VISION_OUTPUT_TOKENS = 4096;
 class VisionExtractionError extends Error {
   constructor(
     message: string,
-    readonly code: "VISION_NOT_CONFIGURED" | "VISION_UNAVAILABLE" | "NO_SIGNALS",
+    readonly code: "VISION_NOT_CONFIGURED" | "VISION_INVALID_KEY" | "VISION_UNAVAILABLE" | "NO_SIGNALS",
   ) {
     super(message);
     this.name = "VisionExtractionError";
@@ -189,16 +189,24 @@ Rules:
 
   if (!response.ok) {
     const providerError = await response.json().catch(() => null);
+    const providerStatus = providerError?.error?.status ?? null;
+    const providerMessage = typeof providerError?.error?.message === "string"
+      ? providerError.error.message.slice(0, 300)
+      : null;
     console.error(JSON.stringify({
       event: "vision_provider_error",
       provider: "google-gemini",
       model: VISION_MODEL,
       status: response.status,
-      providerStatus: providerError?.error?.status ?? null,
-      providerMessage: typeof providerError?.error?.message === "string"
-        ? providerError.error.message.slice(0, 300)
-        : null,
+      providerStatus,
+      providerMessage,
     }));
+    if (
+      providerStatus === "INVALID_ARGUMENT"
+      && providerMessage?.toLowerCase().includes("api key not valid")
+    ) {
+      throw new VisionExtractionError("Vision provider API key is invalid", "VISION_INVALID_KEY");
+    }
     throw new VisionExtractionError("Vision provider request failed", "VISION_UNAVAILABLE");
   }
 
@@ -342,17 +350,21 @@ export async function POST(request: NextRequest) {
     }));
 
     if (failedResults.length === results.length) {
-      const code = failedResults.every((result) => result.error === "NO_SIGNALS")
-        ? "NO_SIGNALS"
-        : "VISION_UNAVAILABLE";
+      const code = failedResults.some((result) => result.error === "VISION_INVALID_KEY")
+        ? "VISION_INVALID_KEY"
+        : failedResults.every((result) => result.error === "NO_SIGNALS")
+          ? "NO_SIGNALS"
+          : "VISION_UNAVAILABLE";
       return NextResponse.json(
         {
           error: code === "NO_SIGNALS"
             ? "No trade records found in the image"
-            : "Image analysis is temporarily unavailable",
+            : code === "VISION_INVALID_KEY"
+              ? "Image analysis credential is invalid"
+              : "Image analysis is temporarily unavailable",
           code,
         },
-        { status: code === "NO_SIGNALS" ? 422 : 502 },
+        { status: code === "NO_SIGNALS" ? 422 : code === "VISION_INVALID_KEY" ? 503 : 502 },
       );
     }
 
