@@ -49,33 +49,44 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* TRADE//OS — HYBRID FONT THEME (Inter + System UI) */
+/* TRADE//OS — restrained multi-colour data canvas */
 :root {
-  --background: #000000; 
-  --foreground: #FFFFFF;
-  --card: #121212;
-  --card-foreground: #FFFFFF;
-  --popover: #121212;
-  --popover-foreground: #FFFFFF;
-  --primary: #2563EB; 
-  --primary-foreground: #FFFFFF;
-  --secondary: #1A1A1A;
-  --secondary-foreground: #FFFFFF;
-  --muted: #1A1A1A;
-  --muted-foreground: #A1A1AA;
-  --accent: #0284C7;
-  --accent-foreground: #FFFFFF;
-  --destructive: #EF4444;
-  --border: #262626;
-  --input: #121212;
-  --ring: #2563EB;
-  --radius: 0.25rem;
+  --background: #03050a;
+  --foreground: #f4f8ff;
+  --card: #0b1018;
+  --card-foreground: #f4f8ff;
+  --popover: #09101a;
+  --popover-foreground: #f4f8ff;
+  --primary: #2f6bff;
+  --primary-foreground: #ffffff;
+  --secondary: #101720;
+  --secondary-foreground: #f4f8ff;
+  --muted: #16202b;
+  --muted-foreground: #9aa8b8;
+  --accent: #16d9ff;
+  --accent-foreground: #03050a;
+  --destructive: #ff4d64;
+  --border: #263342;
+  --input: #101720;
+  --ring: #16d9ff;
+  --radius: 0.5rem;
 
-  /* Trading Feel Colors - Max Vibrance */
-  --profit: #22C55E;
-  --loss: #EF4444;
-  --long: #2563EB;
-  --short: #F43F5E;
+  --ink-1000: #03050a;
+  --ink-950: #070a10;
+  --ink-900: #0b1018;
+  --ink-850: #101720;
+  --ink-800: #16202b;
+  --slate-700: #263342;
+  --slate-500: #59697c;
+  --slate-300: #9aa8b8;
+  --neon-blue: #2f6bff;
+  --neon-cyan: #16d9ff;
+  --profit: #20d785;
+  --loss: #ff4d64;
+  --magenta: #d65cff;
+  --warning: #ffb84d;
+  --long: #2f6bff;
+  --short: #d65cff;
 }
 
 @layer base {
@@ -85,7 +96,13 @@
     text-transform: none;
   }
   body {
-    @apply bg-black text-foreground relative;
+    @apply text-foreground relative;
+    background:
+      radial-gradient(circle at 78% 4%, rgba(47, 107, 255, 0.08), transparent 28rem),
+      linear-gradient(rgba(154, 168, 184, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(154, 168, 184, 0.025) 1px, transparent 1px),
+      var(--ink-1000);
+    background-size: auto, 42px 42px, 42px 42px, auto;
     font-feature-settings: "tnum" on, "cv05" on, "ss01" on;
     font-style: normal !important;
     font-family: var(--font-inter), system-ui, -apple-system, sans-serif !important;
@@ -94,11 +111,14 @@
 
 @layer utilities {
   .fifa-card {
-    @apply rounded border border-white/10 bg-[#121212] transition-all duration-200;
+    @apply rounded-lg border transition-all duration-200;
+    border-color: rgba(154, 168, 184, 0.14);
+    background: rgba(11, 16, 24, 0.76);
   }
 
   .fifa-card:hover {
-    @apply border-white/20 bg-[#181818];
+    border-color: rgba(154, 168, 184, 0.22);
+    background: rgba(16, 23, 32, 0.82);
   }
 
   .heading-sports {
@@ -114,21 +134,56 @@
   }
 
   .label-sports {
-    @apply text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50;
+    @apply text-[10px] font-bold uppercase tracking-wider;
+    color: var(--slate-500);
     font-style: normal !important;
     font-family: var(--font-inter), sans-serif !important;
   }
 
   .brand-gradient {
-    @apply bg-[#2563EB];
+    background: linear-gradient(180deg, #356fff, #2459d8);
   }
 
   .brand-gradient-text {
-    @apply text-[#2563EB];
+    color: var(--neon-blue);
   }
   
   .page-container {
-    @apply p-6 lg:p-10 space-y-8 max-w-[1600px] mx-auto;
+    @apply mx-auto max-w-[1680px] space-y-8 px-6 py-8 lg:px-10;
+  }
+
+  .data-surface {
+    border-top: 1px solid rgba(154, 168, 184, 0.16);
+    border-bottom: 1px solid rgba(154, 168, 184, 0.1);
+    background: linear-gradient(180deg, rgba(11, 16, 24, 0.38), rgba(3, 5, 10, 0));
+  }
+
+  .section-rule {
+    border-top: 1px solid rgba(154, 168, 184, 0.15);
+  }
+
+  .neon-focus {
+    box-shadow: 0 0 22px rgba(22, 217, 255, 0.1);
+  }
+
+  .text-profit {
+    color: var(--profit);
+  }
+
+  .text-loss {
+    color: var(--loss);
+  }
+
+  .text-warning {
+    color: var(--warning);
+  }
+
+  .text-magenta {
+    color: var(--magenta);
+  }
+
+  .text-cyan {
+    color: var(--neon-cyan);
   }
 
   ::-webkit-scrollbar {
@@ -138,6 +193,53 @@
 
   ::-webkit-scrollbar-thumb {
     @apply bg-white/10 rounded-full;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.trade-sidebar ~ main {
+  margin-left: 232px;
+}
+
+@media (max-width: 1100px) {
+  .trade-sidebar {
+    width: 78px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .trade-sidebar-copy,
+  .trade-user-panel {
+    display: none;
+  }
+
+  .trade-brand,
+  .trade-nav-item {
+    justify-content: center;
+  }
+
+  .trade-nav-item {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .trade-nav-item::before {
+    left: -14px;
+  }
+
+  .trade-sidebar ~ main,
+  .trade-main {
+    margin-left: 78px !important;
   }
 }
 

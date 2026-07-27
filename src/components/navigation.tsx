@@ -2,33 +2,35 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import {
-  LayoutDashboard,
-  Upload,
-  ScrollText,
-  Calendar,
   BarChart3,
-  Settings,
+  Calendar,
+  ChevronUp,
+  Database,
+  LayoutDashboard,
   LogOut,
+  ScrollText,
+  Settings,
+  Sparkles,
   TrendingUp,
-  Cpu,
+  Upload,
+  UserRound,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
 import { useI18n } from "@/lib/i18n/provider";
 
 function useNavItems(t: (key: string) => string) {
   return [
     { href: "/", label: t("nav.overview"), icon: LayoutDashboard },
-    { href: "/import", label: t("nav.import"), icon: Upload },
     { href: "/trades", label: t("nav.trades"), icon: ScrollText },
-    { href: "/calendar", label: t("nav.calendar"), icon: Calendar },
     { href: "/analytics", label: t("nav.analytics"), icon: BarChart3 },
+    { href: "/calendar", label: t("nav.calendar"), icon: Calendar },
+    { separator: true },
+    { href: "/import", label: t("nav.import"), icon: Upload },
     { href: "/settings", label: t("nav.settings"), icon: Settings },
-  ];
+  ] as const;
 }
 
 export function Navigation() {
@@ -40,120 +42,121 @@ export function Navigation() {
   const userInitials = session?.user?.name
     ? session.user.name
         .split(" ")
-        .map((n) => n[0])
+        .map((name) => name[0])
         .join("")
         .toUpperCase()
         .slice(0, 2)
     : "TR";
 
   return (
-    <aside className="fixed left-0 top-0 z-40 flex h-full w-64 flex-col border-r border-white/10 bg-[#080808] shadow-2xl transition-all duration-500 overflow-hidden">
-      {/* Logo Section */}
-      <div className="relative flex h-28 items-center gap-4 border-b border-white/10 px-7">
-        <motion.div 
-          whileHover={{ scale: 1.1 }}
-          className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#2563EB] shadow-[0_0_15px_rgba(37,99,235,0.3)] cursor-pointer transition-transform"
-        >
-          <TrendingUp className="h-6 w-6 text-white" />
-        </motion.div>
-        <div className="flex flex-col">
-          <h1 className="text-xl font-black tracking-tighter text-white uppercase leading-none">
-            TRADE<span className="text-[#2563EB]">//</span>OS
-          </h1>
-          <p className="text-[9px] font-black uppercase tracking-[0.35em] text-[#A5B4FC] mt-1">
-            {t("common.navigation")}
-          </p>
-        </div>
-      </div>
+    <aside className="trade-sidebar fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-[#9AA8B8]/10 bg-[linear-gradient(180deg,rgba(7,10,16,0.97),rgba(3,5,10,0.93))] px-5 pb-5 pt-7 backdrop-blur-xl">
+      <Link href="/" className="trade-brand mb-10 flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16D9FF]">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#16D9FF]/25 bg-[#16D9FF]/8 text-[#16D9FF] shadow-[0_0_18px_rgba(22,217,255,0.12)]">
+          <TrendingUp className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <span className="trade-sidebar-copy min-w-0">
+          <span className="block text-[17px] font-extrabold tracking-[-0.6px] text-white">
+            TRADE<span className="text-[#2F6BFF]">//</span>OS
+          </span>
+          <span className="mt-1 block text-[9px] font-bold uppercase tracking-[0.22em] text-[#59697C]">
+            {t("common.productCategory")}
+          </span>
+        </span>
+      </Link>
 
-      {/* Navigation Links */}
-      <nav className="flex-1 space-y-1.5 px-4 py-10 relative">
-        <div className="label-sports px-4 mb-4 opacity-30 text-[8px]">{t("common.navigation")}</div>
-        {navItems.map((item, idx) => {
+      <p className="trade-sidebar-copy mb-3 px-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#435164]">
+        {t("common.workspace")}
+      </p>
+
+      <nav className="grid gap-1" aria-label={t("common.navigation")}>
+        {navItems.map((item, index) => {
+          if ("separator" in item) {
+            return <div key={`separator-${index}`} className="my-3 h-px bg-gradient-to-r from-transparent via-[#9AA8B8]/15 to-transparent" />;
+          }
+
           const isActive = pathname === item.href;
           const Icon = item.icon;
-          return (
-            <motion.div
-              key={item.href}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: idx * 0.03 }}
-            >
-              <Link
-                href={item.href}
-                className={cn(
-                  "group relative flex items-center gap-4 rounded-lg px-4 py-3.5 text-[11px] font-black uppercase tracking-tight transition-all duration-200 overflow-hidden",
-                  isActive 
-                    ? "text-white bg-white/5" 
-                    : "text-muted-foreground/40 hover:text-white hover:bg-white/5"
-                )}
-              >
-                {/* Active Indicator Bar */}
-                {isActive && (
-                  <motion.div 
-                    layoutId="activeBar"
-                    className="absolute left-0 top-3 bottom-3 w-1 bg-[#2563EB] rounded-full z-10"
-                  />
-                )}
 
-                <Icon className={cn(
-                  "relative z-10 h-4.5 w-4.5 transition-all duration-200",
-                  isActive ? "text-[#2563EB] scale-110" : "group-hover:scale-110 group-hover:text-white"
-                )} />
-                <span className="relative z-10">{item.label}</span>
-              </Link>
-            </motion.div>
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={isActive ? "page" : undefined}
+              className={cn(
+                "trade-nav-item group relative flex min-h-11 items-center gap-3 rounded-md px-3 text-[13px] font-bold tracking-[0.01em] transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16D9FF]/70",
+                "before:absolute before:-left-5 before:bottom-2.5 before:top-2.5 before:w-0.5 before:rounded-full before:bg-transparent",
+                isActive
+                  ? "bg-gradient-to-r from-[#2F6BFF]/15 via-[#2F6BFF]/5 to-transparent text-white before:bg-[#2F6BFF] before:shadow-[0_0_12px_#2F6BFF]"
+                  : "text-[#6F7E90] hover:translate-x-0.5 hover:bg-gradient-to-r hover:from-white/5 hover:to-transparent hover:text-[#D7E1EC]"
+              )}
+            >
+              <Icon
+                className={cn(
+                  "h-4 w-4 shrink-0 transition duration-200",
+                  isActive ? "text-[#7DA2FF]" : "text-[#6F7E90] group-hover:text-[#16D9FF] group-hover:drop-shadow-[0_0_7px_rgba(22,217,255,0.35)]"
+                )}
+                aria-hidden="true"
+              />
+              <span className="trade-sidebar-copy">{item.label}</span>
+            </Link>
           );
         })}
-
-        <div className="label-sports px-4 mt-10 mb-4 opacity-30 text-[8px]">{t("common.intelligence")}</div>
-        <motion.div
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.3 }}
-        >
-          <div className="group relative flex items-center gap-4 rounded-lg px-4 py-3.5 text-[11px] font-black uppercase tracking-tight text-muted-foreground/20 cursor-not-allowed">
-            <Cpu className="h-4.5 w-4.5" />
-            <span>{t("common.aiMarketPulse")}</span>
-            <Badge className="absolute right-3 bg-white/5 text-[7px] border-white/5 text-muted-foreground/40 uppercase">{t("common.comingSoon")}</Badge>
-          </div>
-        </motion.div>
       </nav>
 
-      {/* User Session Footer */}
-      <div className="mt-auto p-4 border-t border-white/5">
-        <motion.div 
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="relative group flex items-center gap-3 rounded-xl bg-white/2 p-3.5 border border-white/5 hover:border-white/10 hover:bg-white/5 transition-all duration-300 overflow-hidden"
-        >
-          <Avatar className="h-9 w-9 border border-white/10 transition-colors">
-            <AvatarFallback className="bg-white/5 text-[10px] font-black text-white">
-              {userInitials}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-black text-white truncate uppercase">
-              {session?.user?.name ?? t("common.trader")}
-            </p>
-            <div className="flex items-center gap-1.5">
-               <div className="h-1 w-1 rounded-full bg-[#22C55E]" />
-               <p className="text-[8px] font-bold text-[#22C55E] uppercase tracking-wider">
-                 {t("common.eliteStatus")}
-               </p>
+      <div className="mt-auto border-t border-[#9AA8B8]/10 pt-4">
+        <details className="trade-user-dock group relative">
+          <summary className="flex min-h-[54px] cursor-pointer list-none items-center gap-3 rounded-lg border border-[#9AA8B8]/10 bg-white/[0.02] p-2.5 transition hover:border-[#9AA8B8]/20 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16D9FF]/70 [&::-webkit-details-marker]:hidden">
+            <Avatar className="h-8 w-8 shrink-0 border border-white/10">
+              <AvatarFallback className="bg-white/5 text-[10px] font-extrabold text-white">
+                {userInitials}
+              </AvatarFallback>
+            </Avatar>
+            <span className="trade-sidebar-copy min-w-0 flex-1">
+              <span className="block truncate text-[12px] font-extrabold text-white">
+                {session?.user?.name ?? t("common.trader")}
+              </span>
+              <span className="mt-0.5 block truncate text-[10px] text-[#20D785]">
+                {session?.user?.email ?? t("account.notConfigured")}
+              </span>
+            </span>
+            <ChevronUp className="trade-sidebar-copy h-3.5 w-3.5 text-[#59697C] transition group-open:rotate-180" />
+          </summary>
+
+          <div className="trade-user-panel absolute bottom-[68px] left-0 right-0 rounded-lg border border-[#9AA8B8]/15 bg-[#09101A]/98 p-3 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center justify-between border-b border-white/6 py-2 text-[12px] text-[#9AA8B8]">
+              <span className="flex items-center gap-2"><UserRound className="h-3.5 w-3.5 text-[#16D9FF]" />{t("account.account")}</span>
+              <span className="max-w-[112px] truncate text-white">{session?.user?.email ?? t("account.notConfigured")}</span>
+            </div>
+            <div className="flex items-center justify-between border-b border-white/6 py-2 text-[12px] text-[#9AA8B8]">
+              <span className="flex items-center gap-2"><Database className="h-3.5 w-3.5 text-[#FFB84D]" />{t("account.dataStatus")}</span>
+              <Link href="/" className="text-[#FFB84D] hover:text-white">{t("account.viewDashboard")}</Link>
+            </div>
+            <div className="flex items-center justify-between py-2 text-[12px] text-[#9AA8B8]">
+              <span className="flex items-center gap-2"><Sparkles className="h-3.5 w-3.5 text-[#D65CFF]" />{t("account.aiUsage")}</span>
+              <span className="text-[#D65CFF]">{t("account.onDemand")}</span>
+            </div>
+            <div className="mt-2 flex gap-2">
+              <Link
+                href="/settings"
+                className="flex-1 rounded-md border border-white/10 px-3 py-2 text-center text-[11px] font-bold text-white transition hover:border-[#16D9FF]/35 hover:text-[#16D9FF]"
+              >
+                {t("nav.settings")}
+              </Link>
+              <button
+                type="button"
+                onClick={() => signOut()}
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-white/10 text-[#6F7E90] transition hover:border-[#FF4D64]/35 hover:text-[#FF4D64] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4D64]"
+                aria-label={t("common.signOut")}
+                title={t("common.signOut")}
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
           </div>
-          <button
-            onClick={() => signOut()}
-            className="relative z-10 rounded-lg p-2 text-muted-foreground/30 hover:bg-red-500/10 hover:text-red-400 transition-all"
-            title={t("common.signOut")}
-            aria-label={t("common.signOut")}
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
-        </motion.div>
-        <p className="text-center text-[7px] font-black text-muted-foreground/20 uppercase tracking-[0.3em] mt-4 mb-2">
-          &copy; 2026 Trade OS Systems
+        </details>
+
+        <p className="trade-sidebar-copy mt-4 text-center text-[9px] font-bold uppercase tracking-[0.2em] text-[#354253]">
+          © 2026 TRADE//OS
         </p>
       </div>
     </aside>

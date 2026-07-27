@@ -2,47 +2,38 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
-  TrendingUp,
-  Scan,
-  ChevronDown,
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowRight,
+  ArrowUpRight,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
-  BarChart3,
-  Calendar,
-  Activity,
-  History,
+  Clock3,
   LayoutDashboard,
-  Filter,
   Loader2,
   Plus,
-  Minus,
-  ArrowUpRight,
-  ArrowDownRight,
+  RefreshCw,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { motion } from "framer-motion";
-import Link from "next/link";
-import { Navigation } from "@/components/navigation";
+import { motion, useReducedMotion } from "framer-motion";
 import {
-  AreaChart,
   Area,
+  AreaChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
 } from "recharts";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Navigation } from "@/components/navigation";
+import { InfoButton } from "@/components/info-button";
 import { useI18n } from "@/lib/i18n/provider";
-
-/* ──────────────────────────────
-   Types
-   ────────────────────────────── */
+import { cn } from "@/lib/utils";
 
 interface KPIData {
   totalTrades: number;
@@ -65,9 +56,9 @@ interface KPIData {
   consecutiveLosses: number;
 }
 
-interface EquityPoint {
+interface CumulativePnLPoint {
   date: string;
-  equity: number;
+  cumulativePnL: number;
   pnl: number;
 }
 
@@ -104,32 +95,6 @@ interface AIInsight {
   trend: "up" | "down" | "neutral";
 }
 
-function LocalizedInsight({ insight }: { insight: AIInsight }) {
-  const { t } = useI18n();
-  const titleKey = `insight.${insight.type}Title`;
-  const detailKey = `insight.${insight.type}Detail`;
-
-  return (
-    <>
-      <div className="flex justify-between items-center">
-        <span className="text-[9px] font-black uppercase text-muted-foreground/40">{t(titleKey)}</span>
-        <span className={cn(
-          "text-[9px] font-black px-1.5 py-0.5 rounded uppercase",
-          insight.trend === "up" ? "bg-emerald-500/10 text-emerald-400" :
-          insight.trend === "down" ? "bg-red-500/10 text-red-400" : "bg-white/5 text-white/40"
-        )}>{insight.trend === "up" ? t("common.positive") : insight.trend === "down" ? t("common.warning") : t("common.neutral")}</span>
-      </div>
-      <p className="text-[11px] font-bold text-white/80 leading-relaxed">
-        {t(detailKey)}
-      </p>
-    </>
-  );
-}
-
-/* ──────────────────────────────
-   Components
-   ────────────────────────────── */
-
 interface KpiTrendInfo {
   direction: "up" | "down" | "neutral";
   change: string | null;
@@ -144,591 +109,779 @@ interface KpiTrends {
   maxDrawdown: KpiTrendInfo;
 }
 
-function TrendBadge({ trend, higherIsBetter, change }: { trend: KpiTrendInfo; higherIsBetter: boolean; change?: string | null }) {
+interface RecentTrade {
+  id: string;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  strategy: string | null;
+  setup: string | null;
+  pnl: number | null;
+  tradedAt: number;
+  status: "OPEN" | "CLOSED";
+}
+
+interface RecentTradeResponse {
+  trades: RecentTrade[];
+}
+
+function formatUSD(value: number, includePlus = true): string {
+  const absolute = Math.abs(value);
+  const sign = value < 0 ? "-" : includePlus ? "+" : "";
+  if (absolute >= 1000) return `${sign}$${(absolute / 1000).toFixed(1)}K`;
+  return `${sign}$${absolute.toFixed(2)}`;
+}
+
+function TrendBadge({
+  trend,
+  higherIsBetter = true,
+}: {
+  trend?: KpiTrendInfo;
+  higherIsBetter?: boolean;
+}) {
   const { t } = useI18n();
-  if (trend.insufficientData) {
-    return (
-      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center bg-white/5 text-white/40">
-        <Minus className="h-3 w-3 mr-0.5" />
-        {t("kpi.sample")}
-      </span>
-    );
+
+  if (!trend || trend.insufficientData) {
+    return <span className="text-[10px] font-bold text-[#FFB84D]">{t("kpi.sample")}</span>;
   }
 
   if (trend.direction === "neutral" || !trend.change) {
-    return (
-      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center bg-white/5 text-white/40">
-        <Minus className="h-3 w-3 mr-0.5" />
-        {change ?? "—"}
-      </span>
-    );
+    return <span className="text-[10px] font-bold text-[#59697C]">—</span>;
   }
 
-  const isPositive = trend.direction === "up";
-  const isGood = higherIsBetter ? isPositive : !isPositive;
+  const movedUp = trend.direction === "up";
+  const favourable = higherIsBetter ? movedUp : !movedUp;
 
   return (
-    <span className={cn(
-      "text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center",
-      isGood ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
-    )}>
-      {isPositive ? <ArrowUpRight className="h-3 w-3 mr-0.5" /> : <ArrowDownRight className="h-3 w-3 mr-0.5" />}
+    <span className={cn("inline-flex items-center gap-1 text-[10px] font-extrabold", favourable ? "text-[#20D785]" : "text-[#FF4D64]")}>
+      {movedUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
       {trend.change}
     </span>
   );
 }
 
-function KPIPlayerCard({
+function MetricInfo({
+  label,
+  title,
+  purpose,
+  formula,
+  requirement,
+}: {
+  label: string;
+  title: string;
+  purpose: string;
+  formula: string;
+  requirement: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <InfoButton label={label}>
+      <p className="pr-5 text-[13px] font-extrabold text-white">{title}</p>
+      <p className="text-[12px] text-[#B6C1CE]">{purpose}</p>
+      <p className="text-[11px] text-[#7E8C9E]"><span className="text-[#16D9FF]">{t("info.formula")}:</span> {formula}</p>
+      <p className="text-[11px] text-[#7E8C9E]"><span className="text-[#FFB84D]">{t("info.requirement")}:</span> {requirement}</p>
+    </InfoButton>
+  );
+}
+
+function KpiRailItem({
   label,
   value,
-  subValue,
+  colour,
   trend,
-  colorClass = "text-white",
-  trendInfo,
-  higherIsBetter = true,
-  progress,
+  higherIsBetter,
+  help,
   attention = false,
 }: {
   label: string;
   value: string;
-  subValue?: string;
-  trend?: "up" | "down";
-  colorClass?: string;
-  trendInfo?: KpiTrendInfo;
+  colour: string;
+  trend?: KpiTrendInfo;
   higherIsBetter?: boolean;
-  progress?: number;
+  help: {
+    label: string;
+    purpose: string;
+    formula: string;
+    requirement: string;
+  };
   attention?: boolean;
 }) {
+  const reduceMotion = useReducedMotion();
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{
         opacity: 1,
         y: 0,
-        boxShadow: attention
-          ? ["0 0 0 rgba(239,68,68,0)", "0 0 22px rgba(239,68,68,0.28)", "0 0 0 rgba(239,68,68,0)"]
-          : "0 0 0 rgba(0,0,0,0)",
+        backgroundColor: attention && !reduceMotion
+          ? ["rgba(255,77,100,0)", "rgba(255,77,100,0.08)", "rgba(255,77,100,0)"]
+          : "rgba(255,77,100,0)",
       }}
-      transition={{ duration: attention ? 0.9 : 0.35 }}
+      transition={{ duration: attention && !reduceMotion ? 0.85 : 0.25 }}
       whileHover={{ y: -2 }}
       className={cn(
-        "fifa-card p-5 group relative overflow-hidden cursor-default select-none caret-transparent",
-        attention && "border-red-500/40"
+        "relative min-w-0 border-l border-[#9AA8B8]/10 px-4 py-4 first:border-l-0 first:pl-0",
+        attention && "after:absolute after:inset-x-4 after:bottom-0 after:h-px after:bg-[#FF4D64] after:shadow-[0_0_12px_#FF4D64]"
       )}
     >
-      <span className="label-sports mb-1 block">{label}</span>
-      <div className="flex items-baseline gap-2">
-        <span className={cn("text-2xl font-black heading-sports font-data", colorClass)}>{value}</span>
-        {trendInfo ? (
-          <TrendBadge trend={trendInfo} higherIsBetter={higherIsBetter} change={trendInfo.change} />
-        ) : trend ? (
-          <span className={cn(
-            "text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center",
-            trend === "up" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
-          )}>
-            {trend === "up" ? <ArrowUpRight className="h-3 w-3 mr-0.5" /> : <ArrowDownRight className="h-3 w-3 mr-0.5" />}
-          </span>
-        ) : null}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-extrabold uppercase leading-4 tracking-[0.08em] text-[#59697C]">{label}</span>
+        <MetricInfo title={label} {...help} />
       </div>
-      {subValue && <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-wider">{subValue}</span>}
-      {progress !== undefined && (
-        <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-white/5">
-          <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
-            transition={{ duration: 0.65, ease: "easeOut" }}
-            className={cn("h-full rounded-full", attention ? "bg-red-500" : "bg-[#2563EB]")}
-          />
-        </div>
-      )}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <strong className={cn("font-data text-[22px] font-extrabold tracking-[-0.04em]", colour)}>{value}</strong>
+        <TrendBadge trend={trend} higherIsBetter={higherIsBetter} />
+      </div>
     </motion.div>
   );
 }
 
-/* ──────────────────────────────
-   Helpers
-   ────────────────────────────── */
-
-function formatUSD(n: number): string {
-  const abs = Math.abs(n);
-  const sign = n >= 0 ? "+" : "-";
-  if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(1)}K`;
-  return `${sign}$${abs.toFixed(2)}`;
+function EvidenceBar({
+  label,
+  value,
+  width,
+  colour,
+}: {
+  label: string;
+  value: string;
+  width: number;
+  colour: string;
+}) {
+  return (
+    <div className="grid grid-cols-[100px_1fr_48px] items-center gap-3 text-[12px] text-[#8795A6]">
+      <span>{label}</span>
+      <div className="h-1 overflow-hidden rounded-full bg-white/5">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${Math.max(0, Math.min(100, width))}%` }}
+          transition={{ duration: 0.45, ease: "easeOut" }}
+          className="h-full rounded-full"
+          style={{ backgroundColor: colour }}
+        />
+      </div>
+      <strong className="text-right text-[11px]" style={{ color: colour }}>{value}</strong>
+    </div>
+  );
 }
 
-function formatR(n: number | null): string {
-  if (n === null) return "—";
-  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}R`;
-}
-
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/* ──────────────────────────────
-   Main Page
-   ────────────────────────────── */
+const DAY_KEYS = [
+  "weekday.sun",
+  "weekday.mon",
+  "weekday.tue",
+  "weekday.wed",
+  "weekday.thu",
+  "weekday.fri",
+  "weekday.sat",
+];
 
 export default function OverviewPage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const router = useRouter();
-  const { t } = useI18n();
-  const [loading, setLoading] = useState(true);
+  const { locale, t } = useI18n();
   const [dataLoading, setDataLoading] = useState(true);
-
-  // Fetched data
+  const [dataError, setDataError] = useState(false);
   const [kpi, setKpi] = useState<KPIData | null>(null);
-  const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
+  const [equityCurve, setEquityCurve] = useState<CumulativePnLPoint[]>([]);
   const [directions, setDirections] = useState<BreakdownItem[]>([]);
   const [heatmap, setHeatmap] = useState<HeatmapCell[]>([]);
   const [calendar, setCalendar] = useState<CalendarDay[]>([]);
   const [insights, setInsights] = useState<AIInsight[]>([]);
   const [trends, setTrends] = useState<KpiTrends | null>(null);
-
-  // Calendar nav
+  const [recentTrades, setRecentTrades] = useState<RecentTrade[]>([]);
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(new Date().getMonth() + 1);
+  const initialDashboardLoad = useRef(false);
+  const calendarRequestKey = useRef("");
 
   const fetchCalendar = useCallback(async (year: number, month: number) => {
-    try {
-      const calRes = await fetch(`/api/analytics?type=calendar&year=${year}&month=${month}`);
-      if (calRes.ok) setCalendar(await calRes.json());
-    } catch {
-      toast.error(t("error.failed"));
-    }
-  }, [t]);
+    const response = await fetch(`/api/analytics?type=calendar&year=${year}&month=${month}`);
+    if (!response.ok) throw new Error("calendar");
+    setCalendar(await response.json());
+  }, []);
 
   const fetchAllData = useCallback(async () => {
     setDataLoading(true);
+    setDataError(false);
     try {
-      const [kpiRes, equityRes, dirRes, heatRes, insRes, trendRes] = await Promise.all([
+      const responses = await Promise.all([
         fetch("/api/analytics?type=kpi"),
         fetch("/api/analytics?type=equity&granularity=day"),
         fetch("/api/analytics?type=directions"),
         fetch("/api/analytics?type=heatmap"),
         fetch("/api/analytics?type=insights"),
         fetch("/api/analytics?type=trends"),
+        fetch("/api/trades?limit=4"),
       ]);
 
-      if (kpiRes.ok) setKpi(await kpiRes.json());
-      if (equityRes.ok) setEquityCurve(await equityRes.json());
-      if (dirRes.ok) setDirections(await dirRes.json());
-      if (heatRes.ok) setHeatmap(await heatRes.json());
-      if (insRes.ok) setInsights(await insRes.json());
-      if (trendRes.ok) setTrends(await trendRes.json());
+      if (responses.some((response) => !response.ok)) throw new Error("analytics");
 
-      await fetchCalendar(calYear, calMonth);
-    } catch (err) {
-      console.error("Failed to fetch analytics data", err);
-      toast.error(t("error.failed"));
+      const [kpiData, equityData, directionData, heatmapData, insightData, trendData, tradeData] = await Promise.all(
+        responses.map((response) => response.json())
+      ) as [KPIData, CumulativePnLPoint[], BreakdownItem[], HeatmapCell[], AIInsight[], KpiTrends, RecentTradeResponse];
+
+      setKpi(kpiData);
+      setEquityCurve(equityData);
+      setDirections(directionData);
+      setHeatmap(heatmapData);
+      setInsights(insightData);
+      setTrends(trendData);
+      setRecentTrades(tradeData.trades ?? []);
+    } catch (error) {
+      console.error("Failed to fetch dashboard data", error);
+      setDataError(true);
     } finally {
       setDataLoading(false);
     }
-  }, [calYear, calMonth, fetchCalendar, t]);
+  }, []);
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
-    if (status === "authenticated") {
-      fetchAllData();
-      setTimeout(() => setLoading(false), 300);
+    if (status === "authenticated" && !initialDashboardLoad.current) {
+      initialDashboardLoad.current = true;
+      void fetchAllData();
     }
-  }, [status, router, fetchAllData]);
+  }, [fetchAllData, router, status]);
 
-  if (status === "loading" || loading) {
+  const hasData = Boolean(kpi && kpi.totalTrades > 0);
+  const currentPnL = kpi?.totalPnL ?? 0;
+  const monthPnL = calendar.reduce((sum, day) => sum + day.pnl, 0);
+  const monthTrades = calendar.reduce((sum, day) => sum + day.trades, 0);
+  const monthWins = calendar.reduce((sum, day) => sum + day.wins, 0);
+  const monthWinRate = monthTrades > 0 ? (monthWins / monthTrades) * 100 : 0;
+  const longs = directions.find((item) => item.label === "LONG");
+  const shorts = directions.find((item) => item.label === "SHORT");
+  const totalDirectionTrades = (longs?.trades ?? 0) + (shorts?.trades ?? 0);
+  const longShare = totalDirectionTrades > 0 ? ((longs?.trades ?? 0) / totalDirectionTrades) * 100 : 50;
+  const strongestHeatmap = useMemo(
+    () => [...heatmap].sort((a, b) => Math.abs(b.value) - Math.abs(a.value))[0],
+    [heatmap]
+  );
+  const chartData = useMemo(
+    () => equityCurve.length > 0
+      ? [{ date: t("overview.start"), cumulativePnL: 0, pnl: 0 }, ...equityCurve]
+      : [],
+    [equityCurve, t]
+  );
+
+  const reviewState = useMemo(() => {
+    const closed = kpi?.closedTrades ?? 0;
+    if (closed < 10) {
+      return {
+        tone: "#FFB84D",
+        label: t("review.sampleLabel"),
+        title: t("review.sampleTitle"),
+        detail: t("review.sampleDetail"),
+      };
+    }
+    if ((kpi?.consecutiveLosses ?? 0) >= 3) {
+      return {
+        tone: "#FF4D64",
+        label: t("review.riskLabel"),
+        title: t("review.lossTitle"),
+        detail: t("review.lossDetail"),
+      };
+    }
+    if ((kpi?.winRate ?? 100) < 40) {
+      return {
+        tone: "#D65CFF",
+        label: t("review.patternLabel"),
+        title: t("review.winRateTitle"),
+        detail: t("review.winRateDetail"),
+      };
+    }
+    return {
+      tone: "#20D785",
+      label: t("review.reviewLabel"),
+      title: t("review.stableTitle"),
+      detail: t("review.stableDetail"),
+    };
+  }, [kpi, t]);
+
+  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+  const firstDayOfWeek = new Date(calYear, calMonth - 1, 1).getDay();
+
+  const previousMonth = () => {
+    setCalMonth((month) => {
+      if (month === 1) {
+        setCalYear((year) => year - 1);
+        return 12;
+      }
+      return month - 1;
+    });
+  };
+
+  const nextMonth = () => {
+    setCalMonth((month) => {
+      if (month === 12) {
+        setCalYear((year) => year + 1);
+        return 1;
+      }
+      return month + 1;
+    });
+  };
+
+  const retryAll = () => {
+    void fetchAllData();
+    void fetchCalendar(calYear, calMonth).catch(() => {
+      setDataError(true);
+      toast.error(t("error.failed"));
+    });
+  };
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const requestKey = `${calYear}-${calMonth}`;
+    if (calendarRequestKey.current === requestKey) return;
+    calendarRequestKey.current = requestKey;
+    void fetchCalendar(calYear, calMonth).catch(() => {
+      calendarRequestKey.current = "";
+      setDataError(true);
+      toast.error(t("error.failed"));
+    });
+  }, [calMonth, calYear, fetchCalendar, status, t]);
+
+  if (status === "loading") {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#0F0F1A]">
-        <div className="h-12 w-12 animate-spin rounded-full border-4 border-[#2563EB] border-t-transparent glow-primary" />
+      <div className="flex h-screen items-center justify-center bg-[#03050A]">
+        <Loader2 className="h-9 w-9 animate-spin text-[#16D9FF]" aria-label={t("common.loading")} />
       </div>
     );
   }
 
-  const hasData = kpi && kpi.totalTrades > 0;
-  const currentPnL = kpi?.totalPnL ?? 0;
-
-  // Monthly stats
-  const monthPnL = calendar.reduce((sum, d) => sum + d.pnl, 0);
-  const monthTrades = calendar.reduce((sum, d) => sum + d.trades, 0);
-  const monthWinRate = monthTrades > 0 ? (calendar.reduce((sum, d) => sum + d.wins, 0) / monthTrades) * 100 : 0;
-
-  // Direction stats
-  const longs = directions.find((d) => d.label === "LONG");
-  const shorts = directions.find((d) => d.label === "SHORT");
-  const longTotalPnL = longs?.totalPnL ?? 0;
-  const shortTotalPnL = shorts?.totalPnL ?? 0;
-  const totalPnLAbs = Math.abs(longTotalPnL) + Math.abs(shortTotalPnL) || 1;
-  const longPct = Math.max(10, Math.min(90, Math.round((Math.abs(longTotalPnL) / totalPnLAbs) * 100)));
-  const shortPct = 100 - longPct;
-
-  // Heatmap
-  const heatmapValue = (hour: number, day: number) => heatmap.find((h) => h.hour === hour && h.day === day)?.value ?? 0;
-  const heatmapColor = (val: number) => {
-    if (val > 1) return "bg-[#22C55E]";
-    if (val > 0) return "bg-[#22C55E]/40";
-    if (val < -1) return "bg-[#EF4444]";
-    if (val < 0) return "bg-[#EF4444]/40";
-    return "bg-white/5";
-  };
-
-  // Calendar
-  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
-  const firstDayOfWeek = new Date(calYear, calMonth - 1, 1).getDay();
-  const calendarDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen bg-transparent">
       <Navigation />
-      <main className="ml-64 flex-1 px-10 py-10">
+      <main className="trade-main ml-[232px] min-w-0 flex-1">
         <div className="page-container">
-          {/* Broadcast Header */}
-          <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="flex items-center justify-between"
-      >
-        <div className="flex items-center gap-6">
-          <div className="h-14 w-14 rounded-2xl brand-gradient flex items-center justify-center glow-primary">
-            <LayoutDashboard className="h-8 w-8 text-white" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-black heading-sports">{t("overview.title")}</h1>
-              <p className="label-sports mt-1">{t("overview.subtitle")}</p>
-          </div>
-        </div>
-      </motion.div>
-
-      {dataLoading && !hasData ? (
-        <div className="flex items-center justify-center py-32">
-          <Loader2 className="h-10 w-10 animate-spin text-[#2563EB]" />
-        </div>
-      ) : !hasData ? (
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="fifa-card p-20 flex flex-col items-center justify-center text-center gap-8"
-        >
-          <div className="h-24 w-24 rounded-3xl bg-white/5 flex items-center justify-center border border-white/10 glow-primary">
-            <TrendingUp className="h-12 w-12 text-[#2563EB]" />
-          </div>
-          <div className="max-w-md space-y-4">
-            <h2 className="text-4xl font-black heading-sports">{t("empty.noTrades")}</h2>
-            <p className="text-muted-foreground font-medium">{t("empty.noTradesDesc")}</p>
-          </div>
-          <Link href="/import">
-            <Button size="lg" className="brand-gradient text-white px-10 py-7 text-lg font-black uppercase glow-primary gap-3">
-              <Plus className="h-6 w-6" /> {t("empty.importCta")}
-            </Button>
-          </Link>
-        </motion.div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Main Stage */}
-          <div className="lg:col-span-8 space-y-8">
-            {/* Top Scoreboard */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <motion.div
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="fifa-card p-8 flex flex-col justify-center relative overflow-hidden cursor-default select-none caret-transparent"
-              >
-                <div className="absolute top-0 right-0 p-4 opacity-10">
-                  <Activity className="h-20 w-20 text-[#2563EB]" />
-                </div>
-                <span className="label-sports mb-2">{t("overview.historical")}</span>
-                <div className="flex items-baseline gap-2">
-                  <span className={cn(
-                    "text-6xl font-black heading-sports tracking-tighter font-data",
-                    currentPnL >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"
-                  )}>
-                    {formatUSD(currentPnL)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 mt-6">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">{t("overview.closed")}</span>
-                    <span className="text-lg font-black heading-sports font-data">{kpi?.closedTrades}</span>
-                  </div>
-                  <div className="w-px h-8 bg-white/5" />
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-muted-foreground/40">{t("overview.open")}</span>
-                    <span className="text-lg font-black heading-sports text-[#06B6D4] font-data">{kpi?.openTrades}</span>
-                  </div>
-                </div>
-              </motion.div>
-
-              <motion.div 
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="fifa-card p-6 min-h-[220px]"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <span className="label-sports">{t("overview.cumulativePnl")}</span>
-                  <div className="flex gap-2">
-                    <div className="h-1.5 w-1.5 rounded-full bg-[#2563EB] animate-pulse" />
-                    <span className="text-[8px] font-black uppercase tracking-widest text-[#2563EB]">{t("overview.pnlTrend")}</span>
-                  </div>
-                </div>
-                <div className="h-32">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={equityCurve}>
-                      <defs>
-                        <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#2563EB" stopOpacity={0.4}/>
-                          <stop offset="95%" stopColor="#2563EB" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <Area type="monotone" dataKey="cumulativePnL" stroke="#2563EB" strokeWidth={3} fillOpacity={1} fill="url(#colorEquity)" dot={false} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="mt-4 flex justify-between items-center text-[10px] font-bold uppercase text-muted-foreground/40">
-                  <span>{t("overview.earliest")}</span>
-                  <span>{t("overview.latest")}</span>
-                </div>
-              </motion.div>
+          <motion.header
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col justify-between gap-5 md:flex-row md:items-start"
+          >
+            <div>
+              <p className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[#16D9FF]">
+                TRADE//OS · {t("common.productCategory")}
+              </p>
+              <h1 className="text-[31px] font-extrabold tracking-[-0.025em] text-white">{t("overview.title")}</h1>
+              <p className="mt-2 text-[13px] text-[#718094]">{t("overview.subtitle")}</p>
             </div>
+            <Link href="/import">
+              <Button className="h-10 gap-2 rounded-md border border-[#4D82FF]/65 bg-gradient-to-b from-[#356FFF] to-[#2459D8] px-4 text-[12px] font-extrabold text-white shadow-[0_8px_24px_rgba(47,107,255,0.18)] transition hover:-translate-y-px hover:shadow-[0_10px_28px_rgba(47,107,255,0.28)]">
+                <Plus className="h-4 w-4" /> {t("empty.importCta")}
+              </Button>
+            </Link>
+          </motion.header>
 
-            {/* Player Stats Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              <KPIPlayerCard
-                label={t("overview.winRate")}
-                value={kpi?.winRate !== null && kpi?.winRate !== undefined ? `${kpi.winRate}%` : "—"}
-                subValue={kpi ? `${kpi.winningTrades}/${kpi.closedTrades} · ${t("kpi.sample")}` : undefined}
-                trendInfo={trends?.winRate}
-                colorClass={(kpi?.winRate ?? 100) < 30 ? "text-[#EF4444]" : "text-white"}
-                progress={kpi?.winRate ?? 0}
-                attention={(kpi?.winRate ?? 100) < 30}
-              />
-              <KPIPlayerCard
-                label={t("overview.profitFactor")}
-                value={kpi?.profitFactor !== null && kpi?.profitFactor !== undefined ? kpi.profitFactor.toFixed(2) : "—"}
-                subValue={(kpi?.profitFactor ?? 1) < 1 ? "< 1.00" : undefined}
-                trendInfo={trends?.profitFactor}
-                colorClass={(kpi?.profitFactor ?? 1) < 1 ? "text-[#F59E0B]" : "text-[#22C55E]"}
-              />
-              <KPIPlayerCard
-                label={t("overview.avgRR")}
-                value={kpi?.avgRR !== null && kpi?.avgRR !== undefined ? kpi.avgRR.toFixed(2) : "—"}
-                trendInfo={trends?.avgRR}
-                colorClass={(kpi?.avgRR ?? 1) < 1 ? "text-[#F59E0B]" : "text-white"}
-              />
-              <KPIPlayerCard
-                label={t("overview.expectancy")}
-                value={kpi?.expectancy !== null && kpi?.expectancy !== undefined ? `${kpi.expectancy.toFixed(2)}R` : "—"}
-                trendInfo={trends?.expectancy}
-                colorClass={(kpi?.expectancy ?? 0) >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}
-              />
-              <KPIPlayerCard
-                label={t("overview.maxDrawdown")}
-                value={kpi?.maxDrawdownPercent !== null && kpi?.maxDrawdownPercent !== undefined ? `${kpi.maxDrawdownPercent.toFixed(1)}%` : t("kpi.setBalance")}
-                trendInfo={trends?.maxDrawdown}
-                higherIsBetter={false}
-                colorClass={kpi?.maxDrawdownPercent === null ? "text-white/50 text-sm" : "text-[#EF4444]"}
-              />
-            </div>
-
-            {/* Technical Analysis Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-              {/* Long vs Short Broadcast */}
-              <div className="fifa-card p-6 space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">{t("overview.directionBias")}</h3>
-                  <Filter className="h-3 w-3 text-muted-foreground/30" />
-                </div>
-                <div className="flex justify-between items-center px-2">
-                  <div className="text-center">
-                    <span className="label-sports text-[#2563EB]">{t("common.longTrades")}</span>
-                    <p className="text-xl font-black heading-sports mt-1 font-data">{formatUSD(longTotalPnL)}</p>
-                  </div>
-                  <div className="h-10 w-10 rounded-full border border-white/5 flex items-center justify-center">
-                    <span className="text-[10px] font-black opacity-20">VS</span>
-                  </div>
-                  <div className="text-center">
-                    <span className="label-sports text-[#EC4899]">{t("common.shortTrades")}</span>
-                    <p className="text-xl font-black heading-sports mt-1 font-data">{formatUSD(shortTotalPnL)}</p>
-                  </div>
-                </div>
-                <div className="relative h-6 w-full bg-white/5 rounded-full overflow-hidden border border-white/5">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${longPct}%` }}
-                    className="absolute inset-y-0 left-0 bg-[#2563EB] glow-primary z-10"
-                  />
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${shortPct}%` }}
-                    className="absolute inset-y-0 right-0 bg-[#EC4899] z-10" 
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("overview.winRate")}</span><span className="text-[#2563EB]">{longs?.winRate ?? 0}%</span></div>
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("common.total")}</span><span>{longs?.trades ?? 0}</span></div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("overview.winRate")}</span><span className="text-[#EC4899]">{shorts?.winRate ?? 0}%</span></div>
-                    <div className="flex justify-between text-[9px] font-black uppercase"><span className="text-muted-foreground/40">{t("common.total")}</span><span>{shorts?.trades ?? 0}</span></div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Training Heatmap */}
-              <div className="fifa-card p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">{t("overview.density")}</h3>
-                  <Badge variant="outline" className="text-xs font-black uppercase border-white/5 bg-white/5">H &times; W</Badge>
-                </div>
-                <div className="grid grid-cols-8 gap-1.5">
-                  <div />
-                  {DAY_LABELS.map((d) => (
-                    <div key={d} className="text-[9px] font-black text-muted-foreground/30 text-center uppercase">{d[0]}</div>
-                  ))}
-                  {Array.from({ length: 8 }).map((_, r) => (
-                    <div key={`row-${r}`} className="contents">
-                      <div className="text-[9px] font-black text-muted-foreground/20 py-0.5">{String(r * 3).padStart(2, '0')}</div>
-                      {Array.from({ length: 7 }).map((_, c) => {
-                        const val = heatmapValue(r * 3, c);
-                        return (
-                          <div
-                            key={`cell-${r}-${c}`}
-                            className={cn(
-                              "w-full aspect-square rounded-[3px] transition-all hover:scale-125 hover:z-20",
-                              heatmapColor(val)
-                            )}
-                            title={`${DAY_LABELS[c]} ${r * 3}:00 — ${formatUSD(val)}`}
-                          />
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center justify-center gap-4 pt-2 border-t border-white/5">
-                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#EF4444]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">{t("common.lossZone")}</span></div>
-                   <div className="flex items-center gap-1.5"><div className="h-1.5 w-1.5 rounded-full bg-[#22C55E]" /><span className="text-[9px] font-black uppercase text-muted-foreground/40">{t("common.profitZone")}</span></div>
-                </div>
-              </div>
-
-              {/* Match Calendar */}
-              <div className="fifa-card p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="heading-sports text-sm">{t("overview.calendar")}</h3>
-                  <div className="flex gap-2">
-                    <button aria-label={t("calendar.previousMonth")} onClick={() => { setCalMonth(m => m === 1 ? 12 : m - 1); if (calMonth === 1) setCalYear(y => y - 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronLeft className="h-3 w-3" /></button>
-                    <button aria-label={t("calendar.nextMonth")} onClick={() => { setCalMonth(m => m === 12 ? 1 : m + 1); if (calMonth === 12) setCalYear(y => y + 1); }} className="hover:text-[#2563EB] transition-colors"><ChevronRight className="h-3 w-3" /></button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-7 gap-1 bg-white/5 p-1 rounded-lg">
-                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => <div key={d} className="text-[9px] font-black p-1 text-center opacity-20">{d[0]}</div>)}
-                  {Array.from({ length: firstDayOfWeek }).map((_, i) => <div key={`empty-${i}`} />)}
-                  {calendarDays.map((day) => {
-                    const dateStr = `${calYear}-${String(calMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                    const dayData = calendar.find((d) => d.date === dateStr);
-                    return (
-                      <div key={day} className={cn(
-                        "aspect-square rounded-[2px] flex items-center justify-center text-[9px] font-black",
-                        dayData ? (dayData.pnl >= 0 ? "bg-[#22C55E]/10 text-[#22C55E]" : "bg-[#EF4444]/10 text-[#EF4444]") : "text-white/10"
-                      )}>
-                        {day}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="space-y-1.5 pt-2 border-t border-white/5">
-                  <div className="flex justify-between text-[9px] font-black uppercase">
-                    <span className="text-muted-foreground/40">{t("overview.monthlyPnl")}</span>
-                    <span className={cn("font-data", monthPnL >= 0 ? "text-[#22C55E]" : "text-[#EF4444]")}>{formatUSD(monthPnL)}</span>
-                  </div>
-                  <div className="flex justify-between text-[9px] font-black uppercase">
-                    <span className="text-muted-foreground/40">{t("overview.winRate")}</span>
-                    <span>{monthWinRate.toFixed(1)}%</span>
-                  </div>
-                </div>
+          {dataLoading && !kpi ? (
+            <div className="data-surface flex min-h-[430px] items-center justify-center">
+              <div className="text-center">
+                <Loader2 className="mx-auto h-9 w-9 animate-spin text-[#16D9FF]" />
+                <p className="mt-4 text-[13px] text-[#718094]">{t("common.loading")}</p>
               </div>
             </div>
-          </div>
-
-          {/* Sidebar Highlights */}
-          <div className="lg:col-span-4 space-y-8">
-            {/* Performance Highlights */}
-            <div className="fifa-card p-6 space-y-6">
-              <h3 className="heading-sports text-sm">{t("overview.analysisHighlights")}</h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white/5 rounded-xl p-4 border border-white/5">
-                    <span className="label-sports block mb-1">{t("overview.bestTrade")}</span>
-                    <p className="text-lg font-black heading-sports text-[#22C55E]">{kpi?.bestTrade !== null && kpi?.bestTrade !== undefined ? formatUSD(kpi.bestTrade) : "—"}</p>
-                  </div>
-                  <div className="bg-white/5 rounded-xl p-4 border border-white/5">
-                    <span className="label-sports block mb-1">{t("overview.worstTrade")}</span>
-                    <p className="text-lg font-black heading-sports text-[#EF4444]">{kpi?.worstTrade !== null && kpi?.worstTrade !== undefined ? formatUSD(kpi.worstTrade) : "—"}</p>
-                  </div>
-                </div>
-                
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-                        <ArrowUpRight className="h-5 w-5" />
-                      </div>
-                      <span className="text-[11px] font-black uppercase">{t("overview.longestWin")}</span>
-                    </div>
-                    <span className="text-xl font-black heading-sports text-emerald-400 font-data">{kpi?.consecutiveWins}</span>
-                  </div>
-                  <div className="h-px bg-white/5" />
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-400">
-                        <ArrowDownRight className="h-5 w-5" />
-                      </div>
-                      <span className="text-[11px] font-black uppercase">{t("overview.longestLoss")}</span>
-                    </div>
-                    <span className="text-xl font-black heading-sports text-red-400 font-data">{kpi?.consecutiveLosses}</span>
-                  </div>
-                </div>
-              </div>
+          ) : dataError && !kpi ? (
+            <div className="data-surface flex min-h-[360px] flex-col items-center justify-center px-6 text-center">
+              <AlertTriangle className="h-9 w-9 text-[#FF4D64]" />
+              <h2 className="mt-4 text-xl font-extrabold">{t("error.failed")}</h2>
+              <p className="mt-2 max-w-md text-[13px] text-[#718094]">{t("overview.errorDesc")}</p>
+              <Button onClick={retryAll} variant="outline" className="mt-5 gap-2 border-white/10 bg-transparent text-white hover:border-[#16D9FF]/40 hover:bg-[#16D9FF]/5">
+                <RefreshCw className="h-4 w-4" /> {t("common.retry")}
+              </Button>
             </div>
-
-            {/* AI Insight Teaser */}
-            <div className="fifa-card p-6 relative overflow-hidden group">
-              <div className="absolute top-0 right-0 p-3">
-                <BarChart3 className="h-4 w-4 text-[#06B6D4] animate-pulse" />
-              </div>
-              <h3 className="heading-sports text-sm flex items-center gap-2 mb-6">
-                <span className="h-2 w-2 rounded-full bg-[#06B6D4] shadow-[0_0_8px_#06B6D4]" />
-                {t("overview.intelligenceFeed")}
-              </h3>
-
-              <div className="space-y-6">
-                {insights.map((insight, idx) => (
-                  <div key={idx} className="space-y-2">
-                    <LocalizedInsight insight={insight} />
-                    <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${insight.metric}%` }}
-                        className={cn(
-                          "h-full rounded-full",
-                          insight.trend === "up" ? "bg-emerald-500" :
-                          insight.trend === "down" ? "bg-red-500" : "bg-[#06B6D4]"
-                        )}
-                      />
-                    </div>
-                  </div>
-                ))}
-                
-                {insights.length === 0 && (
-                  <p className="text-[10px] font-medium text-muted-foreground/60 leading-relaxed">
-                    {t("empty.noInsights")}
-                  </p>
-                )}
-              </div>
-
-              <Link href="/analytics" className="block mt-6">
-                <Button variant="link" className="text-[10px] font-black uppercase text-[#06B6D4] p-0 h-auto hover:no-underline hover:text-[#06B6D4]/80">
-                  {t("overview.deepAnalytics")} {'>'}
-                </Button>
+          ) : !hasData ? (
+            <div className="data-surface flex min-h-[430px] flex-col items-center justify-center px-6 text-center">
+              <span className="flex h-16 w-16 items-center justify-center rounded-xl border border-[#16D9FF]/20 bg-[#16D9FF]/5 text-[#16D9FF] shadow-[0_0_24px_rgba(22,217,255,0.1)]">
+                <LayoutDashboard className="h-7 w-7" />
+              </span>
+              <h2 className="mt-6 text-2xl font-extrabold">{t("empty.noTrades")}</h2>
+              <p className="mt-3 max-w-lg text-[13px] leading-6 text-[#718094]">{t("empty.noTradesDesc")}</p>
+              <Link href="/import" className="mt-6 text-[12px] font-extrabold text-[#16D9FF] hover:text-white">
+                {t("empty.importCta")} <ArrowRight className="ml-1 inline h-4 w-4" />
               </Link>
             </div>
-          </div>
-        </div>
-      )}
+          ) : (
+            <>
+              {dataError && (
+                <div className="flex items-center justify-between gap-4 rounded-md border border-[#FFB84D]/20 bg-[#FFB84D]/5 px-4 py-3 text-[12px] text-[#FFB84D]" role="status">
+                  <span className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    {t("overview.partialData")}
+                  </span>
+                  <button type="button" onClick={retryAll} className="font-extrabold text-white hover:text-[#FFB84D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FFB84D]">
+                    {t("common.retry")}
+                  </button>
+                </div>
+              )}
+              <section className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1.65fr)_minmax(290px,0.72fr)]">
+                <div className="data-surface overflow-hidden pt-5">
+                  <div className="flex flex-col justify-between gap-5 px-1 sm:flex-row sm:items-start">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-[16px] font-extrabold">{t("overview.cumulativePnl")}</h2>
+                        <MetricInfo
+                          label={t("info.aboutCumulative")}
+                          title={t("overview.cumulativePnl")}
+                          purpose={t("info.cumulativePurpose")}
+                          formula={t("info.cumulativeFormula")}
+                          requirement={t("info.cumulativeRequirement")}
+                        />
+                        <span className="text-[10px] font-bold text-[#FFB84D]">{t("common.feesExcluded")}</span>
+                      </div>
+                      <p className="mt-2 text-[12px] text-[#718094]">{t("overview.cumulativeCaption")}</p>
+                      <strong className={cn("mt-3 block font-data text-[48px] font-extrabold tracking-[-0.05em]", currentPnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
+                        {formatUSD(currentPnL)}
+                      </strong>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <p className="text-[11px] font-bold text-[#59697C]">
+                        {kpi?.closedTrades} {t("overview.closed")} · {kpi?.openTrades} {t("overview.open")}
+                      </p>
+                      <p className="mt-1 text-[10px] text-[#59697C]">
+                        {t("overview.recordedFees")}: {formatUSD(-(kpi?.totalFees ?? 0), false)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 h-[200px]">
+                    {chartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={chartData} margin={{ top: 12, right: 8, left: 4, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#2F6BFF" stopOpacity={0.3} />
+                              <stop offset="100%" stopColor="#2F6BFF" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <XAxis
+                            dataKey="date"
+                            axisLine={false}
+                            tickLine={false}
+                            minTickGap={34}
+                            tick={{ fontSize: 10, fill: "#59697C" }}
+                            tickFormatter={(value: string) => value.includes("-") ? value.split("-").slice(1).join("/") : value}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            width={62}
+                            tick={{ fontSize: 10, fill: "#59697C" }}
+                            tickFormatter={(value: number) => formatUSD(value, false)}
+                          />
+                          <ReferenceLine y={0} stroke="#9AA8B8" strokeOpacity={0.22} strokeDasharray="4 4" />
+                          <Tooltip
+                            cursor={{ stroke: "#16D9FF", strokeOpacity: 0.35, strokeDasharray: "3 3" }}
+                            content={({ active, payload }) => {
+                              if (!active || !payload?.length) return null;
+                              const point = payload[0].payload as CumulativePnLPoint;
+                              return (
+                                <div className="rounded-md border border-[#16D9FF]/25 bg-[#070A10]/95 p-3 text-[12px] shadow-[0_0_22px_rgba(22,217,255,0.12)] backdrop-blur-xl">
+                                  <p className="font-bold text-[#9AA8B8]">{point.date}</p>
+                                  <p className="mt-1"><span className="text-[#718094]">{t("overview.tradePnl")} </span><strong className={point.pnl >= 0 ? "text-[#20D785]" : "text-[#FF4D64]"}>{formatUSD(point.pnl)}</strong></p>
+                                  <p><span className="text-[#718094]">{t("overview.cumulativePnl")} </span><strong className={point.cumulativePnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]"}>{formatUSD(point.cumulativePnL)}</strong></p>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="cumulativePnL"
+                            stroke="#2F6BFF"
+                            strokeWidth={2.5}
+                            fill="url(#equityFill)"
+                            activeDot={{ r: 5, fill: "#16D9FF", stroke: "#03050A", strokeWidth: 2 }}
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="flex h-full items-center justify-center border-y border-[#9AA8B8]/8">
+                        <div className="text-center">
+                          <AlertTriangle className="mx-auto h-5 w-5 text-[#FFB84D]" />
+                          <p className="mt-2 text-[13px] font-bold text-[#FFB84D]">{t("overview.pnlIncomplete")}</p>
+                          <p className="mt-1 text-[11px] text-[#718094]">{t("overview.pnlIncompleteDesc")}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="border-t border-[#9AA8B8]/8 pt-2 text-right text-[10px] text-[#59697C]">
+                    {t("overview.trendBasis")}
+                  </p>
+                  <div className="grid grid-cols-2 border-t border-[#9AA8B8]/10 md:grid-cols-5">
+                    <KpiRailItem
+                      label={t("overview.winRate")}
+                      value={kpi?.winRate === null ? "—" : `${kpi?.winRate ?? 0}%`}
+                      colour={(kpi?.winRate ?? 100) < 30 ? "text-[#FF4D64]" : "text-white"}
+                      trend={trends?.winRate}
+                      attention={(kpi?.winRate ?? 100) < 30}
+                      help={{ label: t("info.aboutWinRate"), purpose: t("info.winRatePurpose"), formula: t("info.winRateFormula"), requirement: t("info.closedTradesRequirement") }}
+                    />
+                    <KpiRailItem
+                      label={t("overview.profitFactor")}
+                      value={kpi?.profitFactor === null ? "—" : (kpi?.profitFactor ?? 0).toFixed(2)}
+                      colour={(kpi?.profitFactor ?? 1) < 1 ? "text-[#FFB84D]" : "text-[#20D785]"}
+                      trend={trends?.profitFactor}
+                      help={{ label: t("info.aboutProfitFactor"), purpose: t("info.profitFactorPurpose"), formula: t("info.profitFactorFormula"), requirement: t("info.pnlRequirement") }}
+                    />
+                    <KpiRailItem
+                      label={t("overview.avgRR")}
+                      value={kpi?.avgRR === null ? "—" : `${(kpi?.avgRR ?? 0).toFixed(2)}R`}
+                      colour={(kpi?.avgRR ?? 1) < 1 ? "text-[#FFB84D]" : "text-white"}
+                      trend={trends?.avgRR}
+                      help={{ label: t("info.aboutAvgRR"), purpose: t("info.avgRRPurpose"), formula: t("info.avgRRFormula"), requirement: t("info.rrRequirement") }}
+                    />
+                    <KpiRailItem
+                      label={t("overview.expectancy")}
+                      value={kpi?.expectancy === null ? "—" : `${(kpi?.expectancy ?? 0).toFixed(2)}R`}
+                      colour={(kpi?.expectancy ?? 0) >= 0 ? "text-[#20D785]" : "text-[#FF4D64]"}
+                      trend={trends?.expectancy}
+                      help={{ label: t("info.aboutExpectancy"), purpose: t("info.expectancyPurpose"), formula: t("info.expectancyFormula"), requirement: t("info.pnlRequirement") }}
+                    />
+                    <KpiRailItem
+                      label={t("overview.maxDrawdown")}
+                      value={kpi?.maxDrawdownPercent === null ? "—" : `${kpi?.maxDrawdownPercent.toFixed(1)}%`}
+                      colour={kpi?.maxDrawdownPercent === null ? "text-[#59697C]" : "text-[#FF4D64]"}
+                      trend={trends?.maxDrawdown}
+                      higherIsBetter={false}
+                      help={{ label: t("info.aboutDrawdown"), purpose: t("info.drawdownPurpose"), formula: t("info.drawdownFormula"), requirement: t("info.drawdownRequirement") }}
+                    />
+                  </div>
+                </div>
+
+                <aside className="relative border-l border-[#9AA8B8]/15 bg-[radial-gradient(circle_at_100%_0,rgba(214,92,255,0.08),transparent_55%)] pl-0 pt-5 xl:pl-7">
+                  <span className="absolute -left-px top-0 hidden h-24 w-px bg-gradient-to-b from-[#D65CFF] to-transparent shadow-[0_0_12px_rgba(214,92,255,0.45)] xl:block" />
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[#D65CFF]">{t("review.nextAction")}</p>
+                    <MetricInfo
+                      label={t("info.aboutReview")}
+                      title={t("review.nextAction")}
+                      purpose={t("info.reviewPurpose")}
+                      formula={t("info.reviewFormula")}
+                      requirement={t("info.reviewRequirement")}
+                    />
+                  </div>
+                  <h2 className="mt-2 text-[20px] font-extrabold">{t("review.oneThing")}</h2>
+                  <p className="mt-2 text-[12px] leading-5 text-[#718094]">{t("review.caption")}</p>
+
+                  <div className="my-5 border-y border-[#9AA8B8]/10 py-4">
+                    <span className="text-[10px] font-extrabold uppercase tracking-[0.12em]" style={{ color: reviewState.tone }}>
+                      {reviewState.label}
+                    </span>
+                    <strong className="mt-2 block text-[16px] leading-6 text-white">{reviewState.title}</strong>
+                    <p className="mt-2 text-[12px] leading-5 text-[#758396]">{reviewState.detail}</p>
+                  </div>
+
+                  <div className="grid gap-3">
+                    <EvidenceBar
+                      label={t("review.sampleSize")}
+                      value={`${kpi?.closedTrades ?? 0}`}
+                      width={Math.min(100, ((kpi?.closedTrades ?? 0) / 20) * 100)}
+                      colour={(kpi?.closedTrades ?? 0) >= 20 ? "#20D785" : "#FFB84D"}
+                    />
+                    <EvidenceBar
+                      label={t("overview.winRate")}
+                      value={kpi?.winRate === null ? "—" : `${kpi?.winRate ?? 0}%`}
+                      width={kpi?.winRate ?? 0}
+                      colour="#16D9FF"
+                    />
+                    <EvidenceBar
+                      label={t("review.lossStreak")}
+                      value={`${kpi?.consecutiveLosses ?? 0}`}
+                      width={Math.min(100, (kpi?.consecutiveLosses ?? 0) * 15)}
+                      colour={(kpi?.consecutiveLosses ?? 0) >= 3 ? "#FF4D64" : "#D65CFF"}
+                    />
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[#9AA8B8]/10 pt-4">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#59697C]">{t("overview.bestTrade")}</span>
+                      <strong className="mt-1 block text-[16px] text-[#20D785]">{kpi?.bestTrade == null ? "—" : formatUSD(kpi.bestTrade)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#59697C]">{t("overview.worstTrade")}</span>
+                      <strong className="mt-1 block text-[16px] text-[#FF4D64]">{kpi?.worstTrade == null ? "—" : formatUSD(kpi.worstTrade)}</strong>
+                    </div>
+                  </div>
+
+                  <Link href="/analytics" className="mt-5 inline-flex items-center gap-2 text-[12px] font-extrabold text-[#D65CFF] transition hover:drop-shadow-[0_0_8px_rgba(214,92,255,0.45)]">
+                    {t("review.openAnalytics")} <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </aside>
+              </section>
+
+              <section className="mt-8 grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.88fr)]">
+                <div className="section-rule pt-5">
+                  <div className="mb-5 flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-[16px] font-extrabold">{t("overview.comparisonEvidence")}</h2>
+                      <p className="mt-1 text-[12px] text-[#718094]">{t("overview.comparisonCaption")}</p>
+                    </div>
+                    <MetricInfo
+                      label={t("info.aboutDirection")}
+                      title={t("overview.directionBias")}
+                      purpose={t("info.directionPurpose")}
+                      formula={t("info.directionFormula")}
+                      requirement={t("info.directionRequirement")}
+                    />
+                  </div>
+
+                  <div className="grid gap-x-7 md:grid-cols-2">
+                    {[longs, shorts].map((direction, index) => {
+                      const isLong = index === 0;
+                      const tone = isLong ? "#2F6BFF" : "#D65CFF";
+                      return (
+                        <div key={isLong ? "long" : "short"} className="border-b border-[#9AA8B8]/8 py-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <span className="text-[11px] font-extrabold uppercase tracking-[0.08em]" style={{ color: tone }}>
+                                {isLong ? t("common.longTrades") : t("common.shortTrades")}
+                              </span>
+                              <p className="mt-1 text-[12px] text-[#718094]">{direction?.trades ?? 0} {t("kpi.sample")} · {t("overview.winRate")} {direction?.winRate ?? 0}%</p>
+                            </div>
+                            <strong className={cn("text-[18px]", (direction?.totalPnL ?? 0) >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
+                              {formatUSD(direction?.totalPnL ?? 0)}
+                            </strong>
+                          </div>
+                          <div className="mt-4 h-1 overflow-hidden rounded-full bg-white/5">
+                            <div className="h-full rounded-full" style={{ width: `${isLong ? longShare : 100 - longShare}%`, backgroundColor: tone }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-5 flex flex-col justify-between gap-4 border-t border-[#9AA8B8]/8 pt-5 sm:flex-row sm:items-center">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#59697C]">{t("overview.strongestWindow")}</span>
+                      <p className="mt-1 text-[13px] font-bold text-white">
+                        {strongestHeatmap
+                          ? `${t(DAY_KEYS[strongestHeatmap.day])} · ${String(strongestHeatmap.hour).padStart(2, "0")}:00`
+                          : t("overview.insufficientSample")}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-[12px] text-[#718094]">
+                      <Clock3 className="h-4 w-4 text-[#16D9FF]" />
+                      {strongestHeatmap
+                        ? `${strongestHeatmap.trades} ${t("kpi.sample")} · ${formatUSD(strongestHeatmap.value)}`
+                        : t("overview.keepLogging")}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="section-rule pt-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-[16px] font-extrabold">{t("overview.recentTrades")}</h2>
+                      <p className="mt-1 text-[12px] text-[#718094]">{t("overview.recentTradesCaption")}</p>
+                    </div>
+                    <MetricInfo
+                      label={t("info.aboutRecent")}
+                      title={t("overview.recentTrades")}
+                      purpose={t("info.recentPurpose")}
+                      formula={t("info.recentFormula")}
+                      requirement={t("info.recentRequirement")}
+                    />
+                  </div>
+
+                  <div className="divide-y divide-[#9AA8B8]/8">
+                    {recentTrades.map((trade) => (
+                      <Link key={trade.id} href="/trades" className="grid grid-cols-[84px_1fr_auto] items-center gap-3 py-3 text-[12px] transition hover:bg-white/[0.025] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#16D9FF]">
+                        <span className="text-[10px] font-bold uppercase text-[#59697C]">
+                          {new Intl.DateTimeFormat(locale, { day: "2-digit", month: "short" }).format(new Date(trade.tradedAt))}
+                        </span>
+                        <span className="min-w-0">
+                          <strong className="block truncate text-[12px] text-[#D8E0E9]">
+                            {trade.symbol} · {trade.setup ?? trade.strategy ?? (trade.direction === "LONG" ? t("common.longTrades") : t("common.shortTrades"))}
+                          </strong>
+                          <span className="mt-0.5 block text-[10px] text-[#59697C]">{trade.status === "CLOSED" ? t("overview.closed") : t("overview.open")}</span>
+                        </span>
+                        <strong className={cn("font-data text-[12px]", trade.pnl == null ? "text-[#59697C]" : trade.pnl >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
+                          {trade.pnl == null ? "—" : formatUSD(trade.pnl)}
+                        </strong>
+                      </Link>
+                    ))}
+                    {recentTrades.length === 0 && <p className="py-8 text-center text-[12px] text-[#718094]">{t("empty.noTrades")}</p>}
+                  </div>
+
+                  <Link href="/trades" className="mt-4 inline-flex items-center gap-2 text-[11px] font-extrabold text-[#16D9FF] hover:text-white">
+                    {t("overview.viewJournal")} <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+              </section>
+
+              <section className="section-rule mt-8 pt-5">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-[16px] font-extrabold">{t("overview.calendar")}</h2>
+                      <MetricInfo
+                        label={t("info.aboutCalendar")}
+                        title={t("overview.calendar")}
+                        purpose={t("info.calendarPurpose")}
+                        formula={t("info.calendarFormula")}
+                        requirement={t("info.calendarRequirement")}
+                      />
+                    </div>
+                    <p className="mt-1 text-[12px] text-[#718094]">{t("overview.calendarCaption")}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={previousMonth} aria-label={t("calendar.previousMonth")} className="flex h-9 w-9 items-center justify-center rounded-md border border-white/8 text-[#718094] transition hover:border-[#16D9FF]/35 hover:text-[#16D9FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16D9FF]">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <div className="min-w-[92px] text-center text-[12px] font-extrabold text-white">{calYear}-{String(calMonth).padStart(2, "0")}</div>
+                    <button type="button" onClick={nextMonth} aria-label={t("calendar.nextMonth")} className="flex h-9 w-9 items-center justify-center rounded-md border border-white/8 text-[#718094] transition hover:border-[#16D9FF]/35 hover:text-[#16D9FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16D9FF]">
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_270px]">
+                  <div className="grid grid-cols-7 gap-1.5">
+                    {DAY_KEYS.map((dayKey) => <div key={dayKey} className="pb-2 text-center text-[10px] font-extrabold uppercase text-[#59697C]">{t(dayKey).slice(0, 1)}</div>)}
+                    {Array.from({ length: firstDayOfWeek }).map((_, index) => <div key={`empty-${index}`} />)}
+                    {Array.from({ length: daysInMonth }, (_, index) => index + 1).map((day) => {
+                      const date = `${calYear}-${String(calMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                      const record = calendar.find((item) => item.date === date);
+                      return (
+                        <div
+                          key={day}
+                          title={record ? `${record.trades} ${t("kpi.sample")} · ${formatUSD(record.pnl)}` : undefined}
+                          className={cn(
+                            "flex min-h-10 items-center justify-center rounded text-[11px] font-extrabold",
+                            !record && "bg-white/[0.02] text-[#435164]",
+                            record && record.pnl >= 0 && "border border-[#20D785]/20 bg-[#20D785]/8 text-[#20D785]",
+                            record && record.pnl < 0 && "border border-[#FF4D64]/20 bg-[#FF4D64]/8 text-[#FF4D64]"
+                          )}
+                        >
+                          {day}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="border-l border-[#9AA8B8]/10 pl-6">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#16D9FF]/15 bg-[#16D9FF]/5 text-[#16D9FF]">
+                      <CalendarDays className="h-5 w-5" />
+                    </div>
+                    <p className="mt-5 text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#59697C]">{t("overview.monthlyPnl")}</p>
+                    <strong className={cn("mt-1 block text-[27px] font-extrabold", monthPnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>{formatUSD(monthPnL)}</strong>
+                    <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[#9AA8B8]/10 pt-4">
+                      <div>
+                        <span className="text-[10px] text-[#59697C]">{t("common.total")}</span>
+                        <strong className="mt-1 block text-[16px]">{monthTrades}</strong>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-[#59697C]">{t("overview.winRate")}</span>
+                        <strong className="mt-1 block text-[16px] text-[#16D9FF]">{monthWinRate.toFixed(1)}%</strong>
+                      </div>
+                    </div>
+                    <p className="mt-5 text-[11px] leading-5 text-[#718094]">
+                      {insights[0] ? t(`insight.${insights[0].type}Detail`) : t("empty.noInsights")}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
         </div>
       </main>
     </div>

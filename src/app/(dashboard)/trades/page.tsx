@@ -156,7 +156,7 @@ export default function TradesPage() {
         className="flex flex-wrap items-end justify-between gap-6"
       >
         <div>
-          <p className="label-sports mb-1">{t("common.squadDatabase")}</p>
+          <p className="label-sports mb-1">{t("common.productCategory")}</p>
           <h1 className="text-3xl font-black heading-sports">{t("trades.title")}</h1>
           <p className="mt-2 text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">
             {t("trades.subtitle", String(total))}
