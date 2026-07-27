@@ -502,7 +502,7 @@ export function computeHeatmap(
       wins: 0,
       losses: 0,
       breakEven: 0,
-      rValues: [],
+      rValues: [] as number[],
       symbols: new Set<string>(),
       instruments: new Map(),
     };
