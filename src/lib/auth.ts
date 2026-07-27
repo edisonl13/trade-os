@@ -64,25 +64,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async session({ session, token }) {
       if (session.user && token.sub) {
-        const user = await db.query.users.findFirst({
-          where: eq(users.id, token.sub),
-        });
-        if (user) {
-          session.user = {
-            ...session.user,
-            id: token.sub,
-            name: user.name,
-            email: user.email,
-          };
-        } else {
-          session.user.id = token.sub;
-        }
+        session.user.id = token.sub;
+        session.user.name = typeof token.name === "string" ? token.name : session.user.name;
+        session.user.email = typeof token.email === "string" ? token.email : session.user.email;
       }
       return session;
     },
     async jwt({ token, user }) {
       if (user) {
         token.sub = user.id;
+        token.name = user.name;
+        token.email = user.email;
       }
       return token;
     },

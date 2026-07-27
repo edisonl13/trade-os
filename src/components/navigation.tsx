@@ -135,21 +135,16 @@ export function Navigation() {
               <span className="flex items-center gap-2"><Sparkles className="h-3.5 w-3.5 text-[#D65CFF]" />{t("account.aiUsage")}</span>
               <span className="text-[#D65CFF]">{t("account.onDemand")}</span>
             </div>
-            <div className="mt-2 flex gap-2">
-              <Link
-                href="/settings"
-                className="flex-1 rounded-md border border-white/10 px-3 py-2 text-center text-[11px] font-bold text-white transition hover:border-[#16D9FF]/35 hover:text-[#16D9FF]"
-              >
-                {t("nav.settings")}
-              </Link>
+            <div className="mt-2 flex justify-end">
               <button
                 type="button"
                 onClick={() => signOut()}
-                className="flex h-9 w-9 items-center justify-center rounded-md border border-white/10 text-[#6F7E90] transition hover:border-[#FF4D64]/35 hover:text-[#FF4D64] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4D64]"
+                className="flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 px-3 text-[11px] font-bold text-[#8A98A9] transition hover:border-[#FF4D64]/35 hover:text-[#FF4D64] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4D64]"
                 aria-label={t("common.signOut")}
                 title={t("common.signOut")}
               >
                 <LogOut className="h-4 w-4" />
+                <span>{t("common.signOut")}</span>
               </button>
             </div>
           </div>

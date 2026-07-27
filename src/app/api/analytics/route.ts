@@ -15,6 +15,7 @@ import {
   computeAIInsights,
   computeUserLevel,
   computeKpiTrend,
+  computeInstrumentBreakdown,
   type TradeRecord,
 } from "@/lib/analytics";
 
@@ -75,22 +76,66 @@ export async function GET(request: NextRequest) {
   // Get account's initial balance for drawdown calculation
   const initialBalance = account?.initialBalance ?? 0;
 
+  const buildTrends = () => {
+    const metric = (
+      subset: TradeRecord[],
+      key: "winRate" | "profitFactor" | "avgRR" | "expectancy" | "maxDrawdownPercent"
+    ) => computeKPI(subset, initialBalance)[key];
+    return {
+      winRate: computeKpiTrend(allTrades, (rows) => metric(rows, "winRate"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`),
+      profitFactor: computeKpiTrend(allTrades, (rows) => metric(rows, "profitFactor"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}`),
+      avgRR: computeKpiTrend(allTrades, (rows) => metric(rows, "avgRR"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
+      expectancy: computeKpiTrend(allTrades, (rows) => metric(rows, "expectancy"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
+      maxDrawdown: computeKpiTrend(allTrades, (rows) => metric(rows, "maxDrawdownPercent"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`, false),
+    };
+  };
+
   switch (type) {
+    case "overview": {
+      const recentTrades = [...allTrades]
+        .sort((a, b) => b.tradedAt - a.tradedAt)
+        .slice(0, 4)
+        .map((trade) => ({
+          id: trade.id,
+          symbol: trade.symbol,
+          direction: trade.direction,
+          strategy: trade.strategy,
+          setup: (trade as TradeRecord & { setup?: string | null }).setup ?? null,
+          pnl: trade.pnl,
+          tradedAt: trade.tradedAt,
+          status: trade.status,
+        }));
+
+      return NextResponse.json({
+        kpi: computeKPI(allTrades, initialBalance),
+        equityCurve: computeCumulativePnL(allTrades, "day"),
+        directions: computeDirectionBreakdown(allTrades),
+        heatmap: computeHeatmap(allTrades, tz),
+        instruments: computeInstrumentBreakdown(allTrades),
+        trends: buildTrends(),
+        recentTrades,
+      });
+    }
+
+    case "analyticsBundle": {
+      return NextResponse.json({
+        kpi: computeKPI(allTrades, initialBalance),
+        equityCurve: computeCumulativePnL(allTrades, granularity),
+        sessions: computeSessionBreakdown(allTrades),
+        weekdays: computeWeekdayBreakdown(allTrades),
+        directions: computeDirectionBreakdown(allTrades),
+        heatmap: computeHeatmap(allTrades, tz),
+        instruments: computeInstrumentBreakdown(allTrades),
+      });
+    }
+
     case "kpi": {
       const kpi = computeKPI(allTrades, initialBalance);
       return NextResponse.json(kpi);
     }
 
     case "trends": {
-      const metric = (subset: TradeRecord[], key: "winRate" | "profitFactor" | "avgRR" | "expectancy" | "maxDrawdownPercent") =>
-        computeKPI(subset, initialBalance)[key];
-      return NextResponse.json({
-        winRate: computeKpiTrend(allTrades, (rows) => metric(rows, "winRate"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`),
-        profitFactor: computeKpiTrend(allTrades, (rows) => metric(rows, "profitFactor"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}`),
-        avgRR: computeKpiTrend(allTrades, (rows) => metric(rows, "avgRR"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
-        expectancy: computeKpiTrend(allTrades, (rows) => metric(rows, "expectancy"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
-        maxDrawdown: computeKpiTrend(allTrades, (rows) => metric(rows, "maxDrawdownPercent"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`, false),
-      });
+      return NextResponse.json(buildTrends());
     }
 
     case "equity": {
@@ -114,8 +159,12 @@ export async function GET(request: NextRequest) {
     }
 
     case "heatmap": {
-      const heatmap = computeHeatmap(allTrades);
+      const heatmap = computeHeatmap(allTrades, tz);
       return NextResponse.json(heatmap);
+    }
+
+    case "instruments": {
+      return NextResponse.json(computeInstrumentBreakdown(allTrades));
     }
 
     case "calendar": {

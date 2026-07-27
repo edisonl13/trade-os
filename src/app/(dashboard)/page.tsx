@@ -4,7 +4,6 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -30,8 +29,12 @@ import {
   YAxis,
 } from "recharts";
 import { Button } from "@/components/ui/button";
-import { Navigation } from "@/components/navigation";
 import { InfoButton } from "@/components/info-button";
+import {
+  PerformanceHeatmap,
+  type InstrumentPerformance,
+  type PerformanceHeatmapCell,
+} from "@/components/performance-heatmap";
 import { useI18n } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
@@ -72,27 +75,12 @@ interface BreakdownItem {
   avgRR: number | null;
 }
 
-interface HeatmapCell {
-  hour: number;
-  day: number;
-  value: number;
-  trades: number;
-}
-
 interface CalendarDay {
   date: string;
   pnl: number;
   trades: number;
   wins: number;
   losses: number;
-}
-
-interface AIInsight {
-  type: string;
-  title: string;
-  detail: string;
-  metric: number;
-  trend: "up" | "down" | "neutral";
 }
 
 interface KpiTrendInfo {
@@ -120,9 +108,17 @@ interface RecentTrade {
   status: "OPEN" | "CLOSED";
 }
 
-interface RecentTradeResponse {
-  trades: RecentTrade[];
+interface OverviewResponse {
+  kpi: KPIData;
+  equityCurve: CumulativePnLPoint[];
+  directions: BreakdownItem[];
+  heatmap: PerformanceHeatmapCell[];
+  instruments: InstrumentPerformance[];
+  trends: KpiTrends;
+  recentTrades: RecentTrade[];
 }
+
+let overviewCache: OverviewResponse | null = null;
 
 function formatUSD(value: number, includePlus = true): string {
   const absolute = Math.abs(value);
@@ -278,54 +274,37 @@ export default function OverviewPage() {
   const { status } = useSession();
   const router = useRouter();
   const { locale, t } = useI18n();
-  const [dataLoading, setDataLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(overviewCache === null);
   const [dataError, setDataError] = useState(false);
-  const [kpi, setKpi] = useState<KPIData | null>(null);
-  const [equityCurve, setEquityCurve] = useState<CumulativePnLPoint[]>([]);
-  const [directions, setDirections] = useState<BreakdownItem[]>([]);
-  const [heatmap, setHeatmap] = useState<HeatmapCell[]>([]);
-  const [calendar, setCalendar] = useState<CalendarDay[]>([]);
-  const [insights, setInsights] = useState<AIInsight[]>([]);
-  const [trends, setTrends] = useState<KpiTrends | null>(null);
-  const [recentTrades, setRecentTrades] = useState<RecentTrade[]>([]);
+  const [kpi, setKpi] = useState<KPIData | null>(overviewCache?.kpi ?? null);
+  const [equityCurve, setEquityCurve] = useState<CumulativePnLPoint[]>(overviewCache?.equityCurve ?? []);
+  const [directions, setDirections] = useState<BreakdownItem[]>(overviewCache?.directions ?? []);
+  const [heatmap, setHeatmap] = useState<PerformanceHeatmapCell[]>(overviewCache?.heatmap ?? []);
+  const [instruments, setInstruments] = useState<InstrumentPerformance[]>(overviewCache?.instruments ?? []);
+  const [calendar] = useState<CalendarDay[]>([]);
+  const [trends, setTrends] = useState<KpiTrends | null>(overviewCache?.trends ?? null);
+  const [recentTrades, setRecentTrades] = useState<RecentTrade[]>(overviewCache?.recentTrades ?? []);
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(new Date().getMonth() + 1);
   const initialDashboardLoad = useRef(false);
-  const calendarRequestKey = useRef("");
-
-  const fetchCalendar = useCallback(async (year: number, month: number) => {
-    const response = await fetch(`/api/analytics?type=calendar&year=${year}&month=${month}`);
-    if (!response.ok) throw new Error("calendar");
-    setCalendar(await response.json());
-  }, []);
 
   const fetchAllData = useCallback(async () => {
     setDataLoading(true);
     setDataError(false);
     try {
-      const responses = await Promise.all([
-        fetch("/api/analytics?type=kpi"),
-        fetch("/api/analytics?type=equity&granularity=day"),
-        fetch("/api/analytics?type=directions"),
-        fetch("/api/analytics?type=heatmap"),
-        fetch("/api/analytics?type=insights"),
-        fetch("/api/analytics?type=trends"),
-        fetch("/api/trades?limit=4"),
-      ]);
-
-      if (responses.some((response) => !response.ok)) throw new Error("analytics");
-
-      const [kpiData, equityData, directionData, heatmapData, insightData, trendData, tradeData] = await Promise.all(
-        responses.map((response) => response.json())
-      ) as [KPIData, CumulativePnLPoint[], BreakdownItem[], HeatmapCell[], AIInsight[], KpiTrends, RecentTradeResponse];
-
-      setKpi(kpiData);
-      setEquityCurve(equityData);
-      setDirections(directionData);
-      setHeatmap(heatmapData);
-      setInsights(insightData);
-      setTrends(trendData);
-      setRecentTrades(tradeData.trades ?? []);
+      const response = await fetch("/api/analytics?type=overview", {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("analytics");
+      const data = (await response.json()) as OverviewResponse;
+      overviewCache = data;
+      setKpi(data.kpi);
+      setEquityCurve(data.equityCurve);
+      setDirections(data.directions);
+      setHeatmap(data.heatmap);
+      setInstruments(data.instruments);
+      setTrends(data.trends);
+      setRecentTrades(data.recentTrades ?? []);
     } catch (error) {
       console.error("Failed to fetch dashboard data", error);
       setDataError(true);
@@ -344,10 +323,9 @@ export default function OverviewPage() {
 
   const hasData = Boolean(kpi && kpi.totalTrades > 0);
   const currentPnL = kpi?.totalPnL ?? 0;
-  const monthPnL = calendar.reduce((sum, day) => sum + day.pnl, 0);
-  const monthTrades = calendar.reduce((sum, day) => sum + day.trades, 0);
-  const monthWins = calendar.reduce((sum, day) => sum + day.wins, 0);
-  const monthWinRate = monthTrades > 0 ? (monthWins / monthTrades) * 100 : 0;
+  const monthPnL = 0;
+  const monthTrades = 0;
+  const monthWinRate = 0;
   const longs = directions.find((item) => item.label === "LONG");
   const shorts = directions.find((item) => item.label === "SHORT");
   const totalDirectionTrades = (longs?.trades ?? 0) + (shorts?.trades ?? 0);
@@ -422,23 +400,7 @@ export default function OverviewPage() {
 
   const retryAll = () => {
     void fetchAllData();
-    void fetchCalendar(calYear, calMonth).catch(() => {
-      setDataError(true);
-      toast.error(t("error.failed"));
-    });
   };
-
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    const requestKey = `${calYear}-${calMonth}`;
-    if (calendarRequestKey.current === requestKey) return;
-    calendarRequestKey.current = requestKey;
-    void fetchCalendar(calYear, calMonth).catch(() => {
-      calendarRequestKey.current = "";
-      setDataError(true);
-      toast.error(t("error.failed"));
-    });
-  }, [calMonth, calYear, fetchCalendar, status, t]);
 
   if (status === "loading") {
     return (
@@ -449,10 +411,7 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-transparent">
-      <Navigation />
-      <main className="trade-main ml-[232px] min-w-0 flex-1">
-        <div className="page-container">
+    <div className="page-container">
           <motion.header
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -513,7 +472,7 @@ export default function OverviewPage() {
                 </div>
               )}
               <section className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1.65fr)_minmax(290px,0.72fr)]">
-                <div className="data-surface overflow-hidden pt-5">
+                <div className="panel-surface overflow-hidden p-5">
                   <div className="flex flex-col justify-between gap-5 px-1 sm:flex-row sm:items-start">
                     <div>
                       <div className="flex items-center gap-2">
@@ -603,7 +562,7 @@ export default function OverviewPage() {
                     )}
                   </div>
 
-                  <p className="border-t border-[#9AA8B8]/8 pt-2 text-right text-[10px] text-[#59697C]">
+                  <p className="mt-2 rounded-md border border-[#9AA8B8]/10 bg-black/15 px-3 py-2 text-right text-[12px] font-semibold text-[#7E8C9D]">
                     {t("overview.trendBasis")}
                   </p>
                   <div className="grid grid-cols-2 border-t border-[#9AA8B8]/10 md:grid-cols-5">
@@ -647,8 +606,7 @@ export default function OverviewPage() {
                   </div>
                 </div>
 
-                <aside className="relative border-l border-[#9AA8B8]/15 bg-[radial-gradient(circle_at_100%_0,rgba(214,92,255,0.08),transparent_55%)] pl-0 pt-5 xl:pl-7">
-                  <span className="absolute -left-px top-0 hidden h-24 w-px bg-gradient-to-b from-[#D65CFF] to-transparent shadow-[0_0_12px_rgba(214,92,255,0.45)] xl:block" />
+                <aside className="panel-surface relative p-5">
                   <div className="flex items-center gap-2">
                     <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[#D65CFF]">{t("review.nextAction")}</p>
                     <MetricInfo
@@ -709,7 +667,7 @@ export default function OverviewPage() {
               </section>
 
               <section className="mt-8 grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.88fr)]">
-                <div className="section-rule pt-5">
+                <div className="panel-surface p-5">
                   <div className="mb-5 flex items-center justify-between gap-3">
                     <div>
                       <h2 className="text-[16px] font-extrabold">{t("overview.comparisonEvidence")}</h2>
@@ -767,7 +725,7 @@ export default function OverviewPage() {
                   </div>
                 </div>
 
-                <div className="section-rule pt-5">
+                <div className="panel-surface p-5">
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <div>
                       <h2 className="text-[16px] font-extrabold">{t("overview.recentTrades")}</h2>
@@ -808,7 +766,12 @@ export default function OverviewPage() {
                 </div>
               </section>
 
-              <section className="section-rule mt-8 pt-5">
+              <section className="panel-surface mt-8 p-5 sm:p-6">
+                <PerformanceHeatmap cells={heatmap} instruments={instruments} />
+              </section>
+
+              {false && (
+              <section className="hidden" aria-hidden="true">
                 <div className="mb-5 flex items-start justify-between gap-4">
                   <div>
                     <div className="flex items-center gap-2">
@@ -875,15 +838,14 @@ export default function OverviewPage() {
                       </div>
                     </div>
                     <p className="mt-5 text-[11px] leading-5 text-[#718094]">
-                      {insights[0] ? t(`insight.${insights[0].type}Detail`) : t("empty.noInsights")}
+                      {t("empty.noInsights")}
                     </p>
                   </div>
                 </div>
               </section>
+              )}
             </>
           )}
-        </div>
-      </main>
     </div>
   );
 }

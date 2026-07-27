@@ -1,4 +1,4 @@
-import { getDateStrInTz } from "@/lib/timezone";
+import { getDateStrInTz, getHourInTz } from "@/lib/timezone";
 
 /**
  * TRADE//OS Analytics Engine
@@ -383,29 +383,221 @@ export interface HeatmapCell {
   day: number;
   value: number;
   trades: number;
+  wins: number;
+  losses: number;
+  breakEven: number;
+  winRate: number | null;
+  totalR: number | null;
+  avgR: number | null;
+  confidenceLow: number | null;
+  confidenceHigh: number | null;
+  confidenceScore: number;
+  symbols: string[];
+  instrumentStats: Array<{
+    symbol: string;
+    trades: number;
+    wins: number;
+    losses: number;
+    breakEven: number;
+    winRate: number | null;
+    pnl: number;
+    totalR: number | null;
+  }>;
 }
 
-export function computeHeatmap(trades: TradeRecord[]): HeatmapCell[] {
-  const cells = new Map<string, { pnl: number; count: number }>();
+export interface InstrumentBreakdown extends BreakdownItem {
+  symbol: string;
+  totalR: number | null;
+}
+
+function normalizeRecordedSymbol(symbol: string): string {
+  const cleaned = symbol.trim().toUpperCase().replace(/[\s/]+/g, "");
+  return cleaned || "UNKNOWN";
+}
+
+function wilsonInterval(wins: number, total: number): [number, number] | null {
+  if (total <= 0) return null;
+  const z = 1.96;
+  const p = wins / total;
+  const z2 = z * z;
+  const denominator = 1 + z2 / total;
+  const centre = (p + z2 / (2 * total)) / denominator;
+  const halfWidth =
+    (z *
+      Math.sqrt(
+        (p * (1 - p)) / total + z2 / (4 * total * total)
+      )) /
+    denominator;
+  return [
+    Math.max(0, centre - halfWidth),
+    Math.min(1, centre + halfWidth),
+  ];
+}
+
+export function computeInstrumentBreakdown(
+  trades: TradeRecord[]
+): InstrumentBreakdown[] {
+  const groups = new Map<string, TradeRecord[]>();
+  for (const trade of trades) {
+    const symbol = normalizeRecordedSymbol(trade.symbol);
+    if (!groups.has(symbol)) groups.set(symbol, []);
+    groups.get(symbol)!.push(trade);
+  }
+
+  return Array.from(groups.entries())
+    .map(([symbol, rows]) => {
+      const breakdown = breakdownForGroup(symbol, rows);
+      const rValues = rows
+        .filter((trade) => trade.status === "CLOSED" && trade.actualR !== null)
+        .map((trade) => trade.actualR ?? 0);
+      const totalR =
+        rValues.length > 0
+          ? Math.round(rValues.reduce((sum, value) => sum + value, 0) * 100) / 100
+          : null;
+      return { ...breakdown, symbol, totalR };
+    })
+    .sort((a, b) => b.trades - a.trades || a.symbol.localeCompare(b.symbol));
+}
+
+export function computeHeatmap(
+  trades: TradeRecord[],
+  timezone = "UTC"
+): HeatmapCell[] {
+  const cells = new Map<
+    string,
+    {
+      pnl: number;
+      count: number;
+      wins: number;
+      losses: number;
+      breakEven: number;
+      rValues: number[];
+      symbols: Set<string>;
+      instruments: Map<
+        string,
+        {
+          trades: number;
+          wins: number;
+          losses: number;
+          breakEven: number;
+          pnl: number;
+          rValues: number[];
+        }
+      >;
+    }
+  >();
 
   for (const t of trades) {
-    const d = new Date(t.tradedAt);
-    const hour = d.getUTCHours();
-    const day = t.weekDay ?? d.getUTCDay();
+    let hour: number;
+    try {
+      hour = getHourInTz(t.tradedAt, timezone);
+    } catch {
+      hour = new Date(t.tradedAt).getUTCHours();
+    }
+    const day = t.weekDay ?? new Date(t.tradedAt).getUTCDay();
     const key = `${hour}-${day}`;
-    const existing = cells.get(key) ?? { pnl: 0, count: 0 };
+    const existing = cells.get(key) ?? {
+      pnl: 0,
+      count: 0,
+      wins: 0,
+      losses: 0,
+      breakEven: 0,
+      rValues: [],
+      symbols: new Set<string>(),
+      instruments: new Map(),
+    };
+    const symbol = normalizeRecordedSymbol(t.symbol);
     existing.pnl += t.pnl ?? 0;
     existing.count++;
+    if (t.status === "CLOSED" && t.pnl !== null) {
+      if (t.pnl > 0) existing.wins++;
+      else if (t.pnl < 0) existing.losses++;
+      else existing.breakEven++;
+    }
+    if (t.status === "CLOSED" && t.actualR !== null) {
+      existing.rValues.push(t.actualR);
+    }
+    existing.symbols.add(symbol);
+    const instrument = existing.instruments.get(symbol) ?? {
+      trades: 0,
+      wins: 0,
+      losses: 0,
+      breakEven: 0,
+      pnl: 0,
+      rValues: [],
+    };
+    instrument.trades++;
+    instrument.pnl += t.pnl ?? 0;
+    if (t.status === "CLOSED" && t.pnl !== null) {
+      if (t.pnl > 0) instrument.wins++;
+      else if (t.pnl < 0) instrument.losses++;
+      else instrument.breakEven++;
+    }
+    if (t.status === "CLOSED" && t.actualR !== null) {
+      instrument.rValues.push(t.actualR);
+    }
+    existing.instruments.set(symbol, instrument);
     cells.set(key, existing);
   }
 
   return Array.from(cells.entries()).map(([key, v]) => {
     const [hour, day] = key.split("-").map(Number);
+    const resultCount = v.wins + v.losses + v.breakEven;
+    const winRate = resultCount > 0 ? (v.wins / resultCount) * 100 : null;
+    const interval = wilsonInterval(v.wins, resultCount);
+    const totalR =
+      v.rValues.length > 0
+        ? v.rValues.reduce((sum, value) => sum + value, 0)
+        : null;
+    const directionStrength =
+      winRate === null ? 0 : Math.abs(2 * (winRate / 100) - 1);
+    const sampleWeight = 1 - Math.exp(-resultCount / 20);
     return {
       hour,
       day,
       value: Math.round(v.pnl * 100) / 100,
       trades: v.count,
+      wins: v.wins,
+      losses: v.losses,
+      breakEven: v.breakEven,
+      winRate: winRate === null ? null : Math.round(winRate * 100) / 100,
+      totalR: totalR === null ? null : Math.round(totalR * 100) / 100,
+      avgR:
+        totalR === null
+          ? null
+          : Math.round((totalR / v.rValues.length) * 100) / 100,
+      confidenceLow:
+        interval === null ? null : Math.round(interval[0] * 10000) / 100,
+      confidenceHigh:
+        interval === null ? null : Math.round(interval[1] * 10000) / 100,
+      confidenceScore:
+        Math.round(directionStrength * sampleWeight * 1000) / 1000,
+      symbols: Array.from(v.symbols).sort(),
+      instrumentStats: Array.from(v.instruments.entries())
+        .map(([symbol, stats]) => {
+          const outcomes = stats.wins + stats.losses + stats.breakEven;
+          const instrumentTotalR =
+            stats.rValues.length > 0
+              ? stats.rValues.reduce((sum, value) => sum + value, 0)
+              : null;
+          return {
+            symbol,
+            trades: stats.trades,
+            wins: stats.wins,
+            losses: stats.losses,
+            breakEven: stats.breakEven,
+            winRate:
+              outcomes > 0
+                ? Math.round((stats.wins / outcomes) * 10000) / 100
+                : null,
+            pnl: Math.round(stats.pnl * 100) / 100,
+            totalR:
+              instrumentTotalR === null
+                ? null
+                : Math.round(instrumentTotalR * 100) / 100,
+          };
+        })
+        .sort((a, b) => b.trades - a.trades || a.symbol.localeCompare(b.symbol)),
     };
   });
 }
