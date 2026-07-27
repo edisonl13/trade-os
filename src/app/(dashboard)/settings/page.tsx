@@ -460,7 +460,9 @@ export default function SettingsPage() {
                             <Label className="label-sports ml-1">{t("settings.currency")}</Label>
                             <Select value={currency} onValueChange={(value) => setCurrency(value ?? "USD")}>
                               <SelectTrigger className={selectTriggerClass}>
-                                <SelectValue />
+                                <SelectValue>
+                                  {CURRENCIES.find((item) => item.value === currency)?.label ?? currency}
+                                </SelectValue>
                               </SelectTrigger>
                               <SelectContent align="start" className={selectContentClass}>
                                 {CURRENCIES.map((item) => (
@@ -481,7 +483,7 @@ export default function SettingsPage() {
                           <Label className="label-sports ml-1">{t("settings.timezone")}</Label>
                           <Select value={timezone} onValueChange={(value) => setTimezone(value ?? "UTC")}>
                             <SelectTrigger className={selectTriggerClass}>
-                              <SelectValue />
+                              <SelectValue>{timezone.replaceAll("_", " ")}</SelectValue>
                             </SelectTrigger>
                             <SelectContent align="start" className={selectContentClass}>
                               {COMMON_TIMEZONES.map((tz) => (
@@ -535,7 +537,7 @@ export default function SettingsPage() {
                       <Label className="label-sports ml-1">{t("settings.language")}</Label>
                       <Select value={locale} onValueChange={(value) => setLocale((value ?? "en-US") as Locale)}>
                         <SelectTrigger className={selectTriggerClass}>
-                          <SelectValue />
+                          <SelectValue>{LOCALE_LABELS[locale]}</SelectValue>
                         </SelectTrigger>
                         <SelectContent align="start" className={selectContentClass}>
                           {(Object.entries(LOCALE_LABELS) as [Locale, string][]).map(([value, label]) => (
@@ -550,7 +552,7 @@ export default function SettingsPage() {
                       <Label className="label-sports ml-1">{t("settings.displayTz")}</Label>
                       <Select value={tzSetting} onValueChange={(value) => setTzSetting(value ?? "UTC")}>
                         <SelectTrigger className={selectTriggerClass}>
-                          <SelectValue />
+                          <SelectValue>{tzSetting.replaceAll("_", " ")}</SelectValue>
                         </SelectTrigger>
                         <SelectContent align="start" className={selectContentClass}>
                           {COMMON_TIMEZONES.map((tz) => (
