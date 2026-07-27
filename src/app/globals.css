@@ -99,10 +99,8 @@
     @apply text-foreground relative;
     background:
       radial-gradient(circle at 78% 4%, rgba(47, 107, 255, 0.08), transparent 28rem),
-      linear-gradient(rgba(154, 168, 184, 0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(154, 168, 184, 0.025) 1px, transparent 1px),
+      radial-gradient(circle at 12% 82%, rgba(22, 217, 255, 0.025), transparent 30rem),
       var(--ink-1000);
-    background-size: auto, 42px 42px, 42px 42px, auto;
     font-feature-settings: "tnum" on, "cv05" on, "ss01" on;
     font-style: normal !important;
     font-family: var(--font-inter), system-ui, -apple-system, sans-serif !important;

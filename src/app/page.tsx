@@ -175,10 +175,10 @@ function MetricInfo({
   const { t } = useI18n();
   return (
     <InfoButton label={label}>
-      <p className="pr-5 text-[13px] font-extrabold text-white">{title}</p>
-      <p className="text-[12px] text-[#B6C1CE]">{purpose}</p>
-      <p className="text-[11px] text-[#7E8C9E]"><span className="text-[#16D9FF]">{t("info.formula")}:</span> {formula}</p>
-      <p className="text-[11px] text-[#7E8C9E]"><span className="text-[#FFB84D]">{t("info.requirement")}:</span> {requirement}</p>
+      <p className="text-[12px] font-extrabold text-white">{title}</p>
+      <p className="text-[11px] text-[#B6C1CE]">{purpose}</p>
+      <p className="text-[10.5px] text-[#8A98A9]"><span className="text-[#16D9FF]">{t("info.formula")}:</span> {formula}</p>
+      <p className="text-[10.5px] text-[#8A98A9]"><span className="text-[#FFB84D]">{t("info.requirement")}:</span> {requirement}</p>
     </InfoButton>
   );
 }
