@@ -55,6 +55,16 @@ interface BreakdownItem {
 }
 
 interface AnalyticsBundle {
+  dataQuality: {
+    closedTrades: number;
+    eligibleNetPnlTrades: number;
+    incompleteResultTrades: number;
+    unknownCurrencyTrades: number;
+    resultCurrencies: string[];
+    resultCurrency: string | null;
+    currencyComplete: boolean;
+    pnlComplete: boolean;
+  };
   kpi: KPIData;
   sessions: BreakdownItem[];
   weekdays: BreakdownItem[];
@@ -65,11 +75,19 @@ interface AnalyticsBundle {
 
 let analyticsCache: AnalyticsBundle | null = null;
 
-function formatUSD(value: number): string {
+function formatMoney(value: number, currency: string): string {
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
-  return `${sign}$${Math.abs(value).toLocaleString(undefined, {
+  const absolute = Math.abs(value);
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    return `${sign}${absolute.toLocaleString(undefined, {
+      maximumFractionDigits: 8,
+    })} ${currency}`;
+  }
+  return `${sign}${new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
     maximumFractionDigits: 2,
-  })}`;
+  }).format(absolute)}`;
 }
 
 function sampleTone(trades: number) {
@@ -108,7 +126,9 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/auth/signin");
-    if (status === "authenticated") void fetchData();
+    if (status === "authenticated") {
+      queueMicrotask(() => void fetchData());
+    }
   }, [fetchData, router, status]);
 
   const closedOutcomes =
@@ -123,6 +143,7 @@ export default function AnalyticsPage() {
       (a, b) => a.totalPnL - b.totalPnL || b.trades - a.trades
     )[0];
   }, [data]);
+  const resultCurrency = data?.dataQuality.resultCurrency ?? "USD";
 
   if (status === "loading" || !session) return null;
 
@@ -180,6 +201,30 @@ export default function AnalyticsPage() {
           <p className="mt-2 text-[13px] text-[#718094]">
             {t("analytics.lockedDesc")}
           </p>
+        </div>
+      ) : !data.dataQuality.pnlComplete ? (
+        <div className="panel-surface flex min-h-96 flex-col items-center justify-center p-8 text-center">
+          <AlertTriangle className="h-10 w-10 text-[#FFB84D]" />
+          <h2 className="mt-5 text-xl font-extrabold text-white">
+            {t(data.dataQuality.currencyComplete
+              ? "overview.pnlIncomplete"
+              : "overview.currencyIncomplete")}
+          </h2>
+          <p className="mt-2 max-w-xl text-[13px] leading-6 text-[#718094]">
+            {t(data.dataQuality.currencyComplete
+              ? "overview.pnlIncompleteDesc"
+              : "overview.currencyIncompleteDesc")}
+          </p>
+          <p className="mt-4 text-[12px] font-bold text-[#FFB84D]">
+            {data.dataQuality.currencyComplete
+              ? `${data.dataQuality.eligibleNetPnlTrades} / ${data.dataQuality.closedTrades}`
+              : data.dataQuality.resultCurrencies.join(", ") || t("overview.currencyUnknown")}
+          </p>
+          <Link href="/import">
+            <Button className="mt-6 h-10 gap-2 rounded-md border border-[#4D82FF]/65 bg-gradient-to-b from-[#356FFF] to-[#2459D8] px-4 text-[12px] font-extrabold text-white">
+              {t("empty.importCta")} <ArrowRight className="h-4 w-4" />
+            </Button>
+          </Link>
         </div>
       ) : (
         <>
@@ -274,7 +319,7 @@ export default function AnalyticsPage() {
                             className="font-data text-[16px]"
                             style={{ color: tone }}
                           >
-                            {formatUSD(instrument.totalPnL)}
+                            {formatMoney(instrument.totalPnL, resultCurrency)}
                           </strong>
                           <p className="mt-1 text-[10px] text-[#718094]">
                             {instrument.winRate?.toFixed(1) ?? "—"}% ·{" "}
@@ -327,7 +372,7 @@ export default function AnalyticsPage() {
                       {t("analytics.worstTrade")}
                     </span>
                     <strong className="mt-1 block font-data text-[22px] text-[#FF4D64]">
-                      {formatUSD(data.kpi.worstTrade ?? 0)}
+                      {formatMoney(data.kpi.worstTrade ?? 0, resultCurrency)}
                     </strong>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -360,7 +405,7 @@ export default function AnalyticsPage() {
                           {dominantRisk.symbol}
                         </span>
                         <span className={cn("font-data text-[13px]", dominantRisk.totalPnL < 0 ? "text-[#FF4D64]" : "text-[#20D785]")}>
-                          {formatUSD(dominantRisk.totalPnL)}
+                          {formatMoney(dominantRisk.totalPnL, resultCurrency)}
                         </span>
                       </div>
                     </div>
@@ -385,7 +430,7 @@ export default function AnalyticsPage() {
                         {item.label}
                       </span>
                       <span className={cn("font-data text-[11px]", item.totalPnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
-                        {item.trades} · {formatUSD(item.totalPnL)}
+                        {item.trades} · {formatMoney(item.totalPnL, resultCurrency)}
                       </span>
                     </div>
                   ))}

@@ -11,27 +11,29 @@ import {
   AlertCircle,
   Loader2,
   ArrowLeft,
-  ArrowRight,
   Database,
-  ImageIcon,
   Save,
-  Edit3,
-  ScanLine,
   CheckSquare,
   Square,
   Zap,
 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/provider";
+import { COMMON_TIMEZONES } from "@/lib/timezone";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type ImportStep = "upload" | "mapping" | "results";
 type ScreenshotStep = "upload" | "review" | "saving" | "done";
@@ -71,12 +73,48 @@ const FIELD_LABELS: Record<string, string> = {
 /* ============================================================
    CSV Import Tab
    ============================================================ */
+type PnlMode = "GROSS" | "NET" | "";
+type FeeSignConvention = "SIGNED" | "COSTS_POSITIVE" | "";
+
+interface ImportPreview {
+  totalRows: number;
+  detectedBroker: string | null;
+  fileFormat: "CSV" | "MT4_HTML";
+  sourceKind: string;
+  sourceSummary: {
+    currency: string | null;
+    reportedClosedPnl: number | null;
+    rowProfitTotal: number;
+    rowVsSummaryDelta: number | null;
+  } | null;
+  importability: {
+    canSave: boolean;
+    code?: string;
+    message?: string;
+  };
+  mappings: { csvColumn: string; tradeField: string }[];
+  invalidRows: { row: number; errors: string[] }[];
+  invalidRowCount: number;
+  requiredConfirmations: {
+    sourceTimezone: boolean;
+    pnlMode: boolean;
+    feeSignConvention: boolean;
+  };
+}
+
 function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRouter> }) {
   const { t } = useI18n();
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<ImportStep>("upload");
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [sourceTimezone, setSourceTimezone] = useState("");
+  const [pnlMode, setPnlMode] = useState<PnlMode>("");
+  const [feeSignConvention, setFeeSignConvention] =
+    useState<FeeSignConvention>("");
+  const [feesConfirmed, setFeesConfirmed] = useState(false);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [result, setResult] = useState<{
     inserted: number;
     skipped: number;
@@ -87,33 +125,162 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
   const handleFileDrop = useCallback(async (f: File) => {
     const validTypes = [
       "text/csv",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/html",
     ];
-    if (!validTypes.includes(f.type) && !f.name.match(/\.(csv|xls|xlsx)$/i)) {
+    if (!validTypes.includes(f.type) && !f.name.match(/\.(csv|html?|htm)$/i)) {
       toast.error(t("import.invalidFormat"));
       return;
     }
     setFile(f);
     setStep("upload");
+    setPreview(null);
+    setSourceTimezone("");
+    setPnlMode("");
+    setFeeSignConvention("");
+    setFeesConfirmed(false);
+    setReviewConfirmed(false);
   }, [t]);
 
-  const handleImport = async () => {
+  const resetImport = () => {
+    setFile(null);
+    setPreview(null);
+    setStep("upload");
+    setSourceTimezone("");
+    setPnlMode("");
+    setFeeSignConvention("");
+    setFeesConfirmed(false);
+    setReviewConfirmed(false);
+  };
+
+  const getApiErrorMessage = (data: { code?: string; error?: string }) => {
+    switch (data.code) {
+      case "ORDER_HISTORY_REQUIRES_LOT_MATCHING":
+        return t("import.orderHistoryBlocked");
+      case "EXECUTION_HISTORY_REQUIRES_POSITION_MATCHING":
+        return t("import.executionHistoryBlocked");
+      case "UNSUPPORTED_TRADE_HISTORY":
+        return t("import.unsupportedHistory");
+      case "SOURCE_TIMEZONE_REQUIRED":
+        return t("import.timezoneRequired");
+      case "PNL_MODE_REQUIRED":
+        return t("import.pnlModeRequired");
+      case "FEE_CONFIRMATION_REQUIRED":
+        return t("import.feeConfirmationRequired");
+      case "IMPORT_PREFLIGHT_FAILED":
+        return t("import.preflightFailed");
+      default:
+        return data.error ?? t("import.transferFailed");
+    }
+  };
+
+  const localizeRowError = (error: string) => {
+    switch (error) {
+      case "Missing symbol":
+        return t("import.errorMissingSymbol");
+      case "Unrecognized direction":
+        return t("import.errorDirection");
+      case "Missing trade time":
+      case "Missing or invalid trade time":
+        return t("import.errorTradeTime");
+      case "Invalid close time":
+        return t("import.errorCloseTime");
+      case "Close time is before open time":
+        return t("import.errorTimeOrder");
+      default:
+        return error;
+    }
+  };
+
+  const buildFormData = (previewOnly: boolean) => {
+    const formData = new FormData();
+    if (file) formData.append("file", file);
+    if (previewOnly) formData.append("preview", "true");
+    if (preview?.mappings) {
+      formData.append("mappings", JSON.stringify(preview.mappings));
+    }
+    if (sourceTimezone) formData.append("sourceTimezone", sourceTimezone);
+    if (pnlMode) formData.append("pnlMode", pnlMode);
+    if (feeSignConvention) {
+      formData.append("feeSignConvention", feeSignConvention);
+    }
+    formData.append("feesConfirmed", String(feesConfirmed));
+    return formData;
+  };
+
+  const requestPreview = async (): Promise<ImportPreview | null> => {
+    if (!file) return null;
+    try {
+      const res = await fetch("/api/import/csv", {
+        method: "POST",
+        body: buildFormData(true),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(getApiErrorMessage(data));
+        return null;
+      }
+      const nextPreview = data as ImportPreview;
+      setPreview(nextPreview);
+      return nextPreview;
+    } catch {
+      toast.error(t("error.network"));
+      return null;
+    }
+  };
+
+  const handlePreview = async () => {
     if (!file) return;
     setLoading(true);
+    const nextPreview = await requestPreview();
+    if (nextPreview) {
+      if (nextPreview.detectedBroker === "mt4") {
+        setPnlMode("GROSS");
+        setFeeSignConvention("SIGNED");
+      }
+      setStep("mapping");
+    }
+    setLoading(false);
+  };
 
-    const formData = new FormData();
-    formData.append("file", file);
-
+  const handleImport = async () => {
+    if (!file || !preview) return;
+    setLoading(true);
     try {
-      const res = await fetch("/api/import/csv", { method: "POST", body: formData });
-      const data = await res.json();
-
-      if (!res.ok) {
-        toast.error(data.error ?? t("import.transferFailed"));
+      const validatedPreview = await requestPreview();
+      if (
+        !validatedPreview ||
+        !validatedPreview.importability.canSave ||
+        validatedPreview.invalidRowCount > 0
+      ) {
+        toast.error(t("import.resolveErrors"));
         return;
       }
 
+      const res = await fetch("/api/import/csv", {
+        method: "POST",
+        body: buildFormData(false),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (Array.isArray(data.errors)) {
+          setPreview((current) =>
+            current
+              ? {
+                  ...current,
+                  invalidRows: data.errors.map(
+                    (item: { row: number; error: string }) => ({
+                      row: item.row,
+                      errors: [item.error],
+                    })
+                  ),
+                  invalidRowCount: data.invalidRowCount ?? data.errors.length,
+                }
+              : current
+          );
+        }
+        toast.error(getApiErrorMessage(data));
+        return;
+      }
       setResult(data);
       setStep("results");
       toast.success(t("import.importedCount", String(data.inserted)));
@@ -123,6 +290,33 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
       setLoading(false);
     }
   };
+
+  const requiresTimezone = preview?.requiredConfirmations.sourceTimezone ?? false;
+  const grossPnlReady =
+    pnlMode !== "GROSS" || (feesConfirmed && feeSignConvention !== "");
+  const canSave =
+    Boolean(preview?.importability.canSave) &&
+    preview?.invalidRowCount === 0 &&
+    (!requiresTimezone || sourceTimezone !== "") &&
+    pnlMode !== "" &&
+    grossPnlReady &&
+    reviewConfirmed;
+
+  const selectTriggerClass =
+    "h-12 w-full rounded-xl border border-[#9AA8B8]/15 bg-[#101720] px-4 text-sm font-bold text-white hover:border-[#16D9FF]/35 focus-visible:border-[#16D9FF]/60 focus-visible:ring-[#16D9FF]/15";
+  const selectContentClass =
+    "max-h-72 rounded-xl border border-[#16D9FF]/20 bg-[#0B1018] p-1 text-white shadow-[0_18px_50px_rgba(0,0,0,0.55),0_0_20px_rgba(22,217,255,0.08)]";
+  const selectItemClass =
+    "min-h-10 rounded-lg px-3 text-[12px] font-bold text-[#B6C1CE] focus:bg-[#16D9FF]/10 focus:text-white data-[selected]:text-[#20D785]";
+  const importabilityMessage =
+    preview?.importability.code === "ORDER_HISTORY_REQUIRES_LOT_MATCHING"
+      ? t("import.orderHistoryBlocked")
+      : preview?.importability.code ===
+          "EXECUTION_HISTORY_REQUIRES_POSITION_MATCHING"
+        ? t("import.executionHistoryBlocked")
+        : preview?.importability.code === "UNSUPPORTED_TRADE_HISTORY"
+          ? t("import.unsupportedHistory")
+          : preview?.importability.message;
 
   if (step === "results" && result) {
     return (
@@ -146,7 +340,7 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
             </div>
           </div>
           <div className="flex gap-3 w-full max-w-sm">
-            <Button variant="outline" className="flex-1 border-white/5 font-black uppercase rounded-xl h-12" onClick={() => { setFile(null); setStep("upload"); }}>{t("import.reset")}</Button>
+            <Button variant="outline" className="flex-1 border-white/5 font-black uppercase rounded-xl h-12" onClick={resetImport}>{t("import.reset")}</Button>
             <Button className="flex-1 brand-gradient text-white font-black uppercase rounded-xl h-12 glow-primary" onClick={() => navRouter.push("/")}>{t("import.liveView")}</Button>
           </div>
         </div>
@@ -174,9 +368,9 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
             <h3 className="text-xl font-black heading-sports">{t("import.dropCsv")}</h3>
             <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">{t("import.csvFormats")}</p>
           </div>
-          <input type="file" accept=".csv,.xls,.xlsx" className="hidden" id="csv-upload" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileDrop(f); }} />
+          <input type="file" accept=".csv,.htm,.html" className="hidden" id="csv-upload" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileDrop(f); }} />
         </div>
-      ) : (
+      ) : step === "upload" ? (
         <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="fifa-card p-8">
            <div className="flex items-center gap-6 mb-8">
               <div className="h-16 w-16 rounded-2xl bg-[#3B82F6]/10 flex items-center justify-center border border-[#3B82F6]/20">
@@ -190,13 +384,233 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
            </div>
            
            <div className="flex gap-4">
-               <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={() => setFile(null)}>{t("import.cancel")}</Button>
-              <Button className="h-14 flex-[2] brand-gradient text-white font-black uppercase glow-primary" onClick={handleImport} disabled={loading}>
-                  {loading ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t("import.synchronizing")}</> : <><Upload className="mr-2 h-5 w-5" /> {t("import.uploadBtn")}</>}
+               <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={resetImport}>{t("import.cancel")}</Button>
+              <Button className="h-14 flex-[2] brand-gradient text-white font-black uppercase glow-primary" onClick={handlePreview} disabled={loading}>
+                  {loading ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t("import.synchronizing")}</> : <><Upload className="mr-2 h-5 w-5" /> {t("import.previewBtn")}</>}
               </Button>
            </div>
         </motion.div>
-      )}
+      ) : preview ? (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-5"
+        >
+          <div className="fifa-card p-7 space-y-6">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#16D9FF]">
+                {t("import.reviewEyebrow")}
+              </p>
+              <h2 className="mt-2 text-2xl font-black heading-sports">
+                {t("import.reviewTitle")}
+              </h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t("import.reviewDescription")}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              {[
+                [t("import.detectedFormat"), preview.fileFormat],
+                [t("import.detectedBroker"), preview.detectedBroker ?? "—"],
+                [t("import.detectedRows"), String(preview.totalRows)],
+                [t("import.invalidRows"), String(preview.invalidRowCount)],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-white/8 bg-white/[0.025] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    {label}
+                  </p>
+                  <p className="mt-2 text-lg font-black text-white">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {!preview.importability.canSave && (
+              <div className="flex gap-3 rounded-xl border border-[#FF4D67]/30 bg-[#FF4D67]/8 p-4 text-sm text-[#FF8798]">
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                <span>{importabilityMessage}</span>
+              </div>
+            )}
+
+            {preview.sourceSummary && (
+              <div className="rounded-xl border border-[#16D9FF]/15 bg-[#08131D] p-5">
+                <h3 className="font-black">{t("import.summaryCheck")}</h3>
+                <div className="mt-4 grid grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-[10px] uppercase text-muted-foreground">{t("import.reportedClosedPnl")}</p>
+                    <p className="mt-1 font-black">{preview.sourceSummary.reportedClosedPnl ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-muted-foreground">{t("import.rowProfitTotal")}</p>
+                    <p className="mt-1 font-black">{preview.sourceSummary.rowProfitTotal}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-muted-foreground">{t("import.difference")}</p>
+                    <p className={cn(
+                      "mt-1 font-black",
+                      preview.sourceSummary.rowVsSummaryDelta === 0
+                        ? "text-[#20D785]"
+                        : "text-[#F5B942]"
+                    )}>
+                      {preview.sourceSummary.rowVsSummaryDelta ?? "—"}
+                    </p>
+                  </div>
+                </div>
+                {preview.sourceSummary.rowVsSummaryDelta !== null &&
+                  preview.sourceSummary.rowVsSummaryDelta !== 0 && (
+                    <p className="mt-4 text-xs leading-5 text-[#F5B942]">
+                      {t("import.precisionWarning")}
+                    </p>
+                  )}
+              </div>
+            )}
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>{t("import.sourceTimezone")}</Label>
+                {requiresTimezone ? (
+                  <Select value={sourceTimezone} onValueChange={(value) => setSourceTimezone(value ?? "")}>
+                    <SelectTrigger className={selectTriggerClass}>
+                      <SelectValue placeholder={t("import.selectTimezone")}>
+                        {sourceTimezone ? sourceTimezone.replaceAll("_", " ") : t("import.selectTimezone")}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start" className={selectContentClass}>
+                      {COMMON_TIMEZONES.map((timezone) => (
+                        <SelectItem key={timezone} value={timezone} className={selectItemClass}>
+                          {timezone.replaceAll("_", " ")}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex h-12 items-center rounded-xl border border-white/8 bg-white/[0.025] px-4 text-sm font-bold text-[#20D785]">
+                    {t("import.embeddedTimezone")}
+                  </div>
+                )}
+                <p className="text-xs leading-5 text-muted-foreground">{t("import.timezoneHelp")}</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>{t("import.pnlBasis")}</Label>
+                <Select value={pnlMode} onValueChange={(value) => {
+                  const nextMode = (value ?? "") as PnlMode;
+                  setPnlMode(nextMode);
+                  if (nextMode !== "GROSS") {
+                    setFeeSignConvention("");
+                    setFeesConfirmed(false);
+                  }
+                }}>
+                  <SelectTrigger className={selectTriggerClass}>
+                    <SelectValue placeholder={t("import.selectPnlBasis")}>
+                      {pnlMode === "GROSS"
+                        ? t("import.grossPnl")
+                        : pnlMode === "NET"
+                          ? t("import.netPnl")
+                          : t("import.selectPnlBasis")}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent align="start" className={selectContentClass}>
+                    <SelectItem value="NET" className={selectItemClass}>{t("import.netPnl")}</SelectItem>
+                    <SelectItem value="GROSS" className={selectItemClass}>{t("import.grossPnl")}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {pnlMode === "GROSS" ? t("import.grossPnlHelp") : t("import.netPnlHelp")}
+                </p>
+              </div>
+            </div>
+
+            {pnlMode === "GROSS" && (
+              <div className="grid gap-5 rounded-xl border border-[#F5B942]/20 bg-[#F5B942]/5 p-5 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>{t("import.feeSign")}</Label>
+                  <Select value={feeSignConvention} onValueChange={(value) => setFeeSignConvention((value ?? "") as FeeSignConvention)}>
+                    <SelectTrigger className={selectTriggerClass}>
+                      <SelectValue placeholder={t("import.selectFeeSign")}>
+                        {feeSignConvention === "SIGNED"
+                          ? t("import.signedFees")
+                          : feeSignConvention === "COSTS_POSITIVE"
+                            ? t("import.positiveCosts")
+                            : t("import.selectFeeSign")}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start" className={selectContentClass}>
+                      <SelectItem value="SIGNED" className={selectItemClass}>{t("import.signedFees")}</SelectItem>
+                      <SelectItem value="COSTS_POSITIVE" className={selectItemClass}>{t("import.positiveCosts")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFeesConfirmed((current) => !current)}
+                  className={cn(
+                    "flex min-h-12 items-center gap-3 rounded-xl border px-4 text-left text-sm font-bold transition-colors",
+                    feesConfirmed
+                      ? "border-[#20D785]/35 bg-[#20D785]/8 text-[#20D785]"
+                      : "border-white/10 bg-black/10 text-muted-foreground"
+                  )}
+                >
+                  {feesConfirmed ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
+                  {t("import.feeConfirmed")}
+                </button>
+              </div>
+            )}
+
+            {preview.invalidRowCount > 0 && (
+              <div className="rounded-xl border border-[#FF4D67]/30 bg-[#FF4D67]/7 p-5">
+                <h3 className="font-black text-[#FF8798]">{t("import.invalidRowsTitle")}</h3>
+                <p className="mt-1 text-xs text-muted-foreground">{t("import.invalidRowsBlock")}</p>
+                <div className="mt-4 space-y-2">
+                  {preview.invalidRows.slice(0, 8).map((item) => (
+                    <div key={item.row} className="rounded-lg bg-black/20 px-3 py-2 text-xs">
+                      <span className="font-black text-[#FF8798]">#{item.row}</span>
+                      <span className="ml-2 text-muted-foreground">
+                        {item.errors.map(localizeRowError).join("; ")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setReviewConfirmed((current) => !current)}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-xl border p-4 text-left text-sm font-bold transition-colors",
+                reviewConfirmed
+                  ? "border-[#16D9FF]/35 bg-[#16D9FF]/8 text-white"
+                  : "border-white/10 bg-white/[0.02] text-muted-foreground"
+              )}
+            >
+              {reviewConfirmed ? <CheckSquare className="h-5 w-5 text-[#16D9FF]" /> : <Square className="h-5 w-5" />}
+              {t("import.reviewConfirmed")}
+            </button>
+
+            <div className="flex gap-4">
+              <Button
+                variant="ghost"
+                className="h-14 flex-1 font-black uppercase text-muted-foreground"
+                onClick={() => setStep("upload")}
+                disabled={loading}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                {t("import.backToFile")}
+              </Button>
+              <Button
+                className="h-14 flex-[2] brand-gradient text-white font-black uppercase glow-primary"
+                onClick={handleImport}
+                disabled={!canSave || loading}
+              >
+                {loading
+                  ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t("import.synchronizing")}</>
+                  : <><Save className="mr-2 h-5 w-5" /> {t("import.saveImport")}</>}
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+      ) : null}
     </div>
   );
 }

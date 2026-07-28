@@ -15,6 +15,27 @@
       "when": 1784897961902,
       "tag": "0001_known_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785214107022,
+      "tag": "0002_fat_loki",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785224814068,
+      "tag": "0003_daily_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785227492261,
+      "tag": "0004_slippery_obadiah_stane",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import { v4 as uuidv4 } from "uuid";
+import { createHash } from "node:crypto";
 
 export interface CsvRow {
   [key: string]: string;
@@ -13,15 +13,21 @@ export interface ParsedCsvResult {
 }
 
 export interface MappedTrade {
+  sourceSymbol: string | null;
   symbol: string;
-  direction: "LONG" | "SHORT";
+  sourceTradeId: string | null;
+  direction: "LONG" | "SHORT" | null;
   entryPrice: number | null;
   exitPrice: number | null;
   stopLoss: number | null;
   targetPrice: number | null;
   positionSize: number | null;
+  initialRiskAmount: number | null;
   pnl: number | null;
-  fees: number | null;
+  resultCurrency: string | null;
+  commission: number | null;
+  swap: number | null;
+  otherFees: number | null;
   tradedAt: string | null;
   closedAt: string | null;
   strategy: string | null;
@@ -29,6 +35,7 @@ export interface MappedTrade {
   notes: string | null;
   idempotencyKey: string;
   rowIndex: number;
+  validationErrors: string[];
 }
 
 export interface ColumnMapping {
@@ -42,6 +49,9 @@ export interface ColumnMapping {
  */
 export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
   "ic markets": {
+    "ticket": "sourceTradeId",
+    "order": "sourceTradeId",
+    "deal": "sourceTradeId",
     "instrument": "symbol",
     "symbol": "symbol",
     "type": "direction",
@@ -56,11 +66,14 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
     "volume": "positionSize",
     "lots": "positionSize",
     "profit": "pnl",
-    "commission": "fees",
-    "swap": "fees",
+    "commission": "commission",
+    "taxes": "otherFees",
+    "swap": "swap",
     "comment": "notes",
   },
   ftmo: {
+    "ticket": "sourceTradeId",
+    "order": "sourceTradeId",
     "instrument": "symbol",
     "symbol": "symbol",
     "type": "direction",
@@ -70,10 +83,14 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
     "close price": "exitPrice",
     "volume": "positionSize",
     "profit": "pnl",
-    "commission": "fees",
+    "commission": "commission",
+    "swap": "swap",
     "comment": "notes",
   },
   mt4: {
+    "ticket": "sourceTradeId",
+    "order": "sourceTradeId",
+    "item": "symbol",
     "symbol": "symbol",
     "type": "direction",
     "open time": "tradedAt",
@@ -84,11 +101,15 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
     "take profit": "targetPrice",
     "volume": "positionSize",
     "profit": "pnl",
-    "commission": "fees",
-    "swap": "fees",
+    "commission": "commission",
+    "swap": "swap",
     "comment": "notes",
   },
   mt5: {
+    "ticket": "sourceTradeId",
+    "order": "sourceTradeId",
+    "deal": "sourceTradeId",
+    "position": "sourceTradeId",
     "symbol": "symbol",
     "type": "direction",
     "open time": "tradedAt",
@@ -99,11 +120,14 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
     "take profit": "targetPrice",
     "volume": "positionSize",
     "profit": "pnl",
-    "commission": "fees",
-    "swap": "fees",
+    "commission": "commission",
+    "swap": "swap",
     "comment": "notes",
   },
   ctrader: {
+    "position id": "sourceTradeId",
+    "deal id": "sourceTradeId",
+    "order id": "sourceTradeId",
     "symbol": "symbol",
     "instrument": "symbol",
     "side": "direction",
@@ -114,10 +138,13 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
     "close price": "exitPrice",
     "volume": "positionSize",
     "net p/l": "pnl",
-    "commission": "fees",
+    "commission": "commission",
+    "swap": "swap",
     "comment": "notes",
   },
   oanda: {
+    "trade id": "sourceTradeId",
+    "transaction id": "sourceTradeId",
     "pair": "symbol",
     "side": "direction",
     "datestart": "tradedAt",
@@ -127,7 +154,6 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
     "maxtp": "targetPrice",
     "amount": "positionSize",
     "rpnl": "pnl",
-    "upnl": "pnl",
     "avgcloseprice": "exitPrice",
     "avgrishreward": "actualR",
     "maxriskreward": "actualR",
@@ -135,6 +161,7 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
 };
 
 export const TRADE_FIELDS = [
+  { value: "sourceTradeId", label: "Source Trade / Order ID", required: false },
   { value: "symbol", label: "Symbol", required: true },
   { value: "direction", label: "Direction (LONG/SHORT)", required: true },
   { value: "entryPrice", label: "Entry Price", required: false },
@@ -142,8 +169,12 @@ export const TRADE_FIELDS = [
   { value: "stopLoss", label: "Stop Loss", required: false },
   { value: "targetPrice", label: "Target Price", required: false },
   { value: "positionSize", label: "Position Size", required: false },
-  { value: "pnl", label: "P&L", required: false },
-  { value: "fees", label: "Fees / Commission", required: false },
+  { value: "initialRiskAmount", label: "Initial Risk Amount", required: false },
+  { value: "pnl", label: "Reported Realized P&L", required: false },
+  { value: "resultCurrency", label: "P&L / Settlement Currency", required: false },
+  { value: "commission", label: "Commission", required: false },
+  { value: "swap", label: "Swap / Financing", required: false },
+  { value: "otherFees", label: "Other Fees / Adjustments", required: false },
   { value: "tradedAt", label: "Trade Date/Time", required: true },
   { value: "closedAt", label: "Close Date/Time", required: false },
   { value: "strategy", label: "Strategy", required: false },
@@ -154,10 +185,7 @@ export const TRADE_FIELDS = [
 /**
  * Parse CSV string into rows.
  */
-export function parseCsv(
-  csvContent: string,
-  fileName: string
-): ParsedCsvResult {
+export function parseCsv(csvContent: string): ParsedCsvResult {
   const result = Papa.parse<CsvRow>(csvContent, {
     header: true,
     skipEmptyLines: true,
@@ -181,6 +209,14 @@ export function parseCsv(
  */
 export function detectBroker(headers: string[]): string | null {
   const headerSet = new Set(headers.map((h) => h.toLowerCase().trim()));
+
+  if (
+    ["ticket", "open time", "type", "item", "close time", "taxes"].every(
+      (header) => headerSet.has(header)
+    )
+  ) {
+    return "mt4";
+  }
 
   for (const [broker, mapping] of Object.entries(BROKER_MAPPINGS)) {
     const matchedColumns = Object.keys(mapping).filter((col) =>
@@ -212,8 +248,25 @@ export function autoMapColumns(
     }
 
     // Try generic matching
+    if (
+      [
+        "pnl currency",
+        "p&l currency",
+        "profit currency",
+        "result currency",
+        "settlement currency",
+        "account currency",
+      ].includes(normalized)
+    ) {
+      return { csvColumn: header, tradeField: "resultCurrency" };
+    }
     if (["symbol", "instrument", "pair", "currency"].includes(normalized)) {
       return { csvColumn: header, tradeField: "symbol" };
+    }
+    if (
+      ["ticket", "trade id", "tradeid", "deal", "deal id", "order", "order id", "position id"].includes(normalized)
+    ) {
+      return { csvColumn: header, tradeField: "sourceTradeId" };
     }
     if (["type", "direction", "side", "buy/sell"].includes(normalized)) {
       return { csvColumn: header, tradeField: "direction" };
@@ -238,14 +291,23 @@ export function autoMapColumns(
       return { csvColumn: header, tradeField: "positionSize" };
     }
     if (
-      ["profit", "pnl", "p&l", "net profit", "gross profit", "rpnl", "upnl"].includes(normalized)
+      ["profit", "pnl", "p&l", "net profit", "gross profit", "rpnl"].includes(normalized)
     ) {
       return { csvColumn: header, tradeField: "pnl" };
     }
+    if (["commission", "commissions"].includes(normalized)) {
+      return { csvColumn: header, tradeField: "commission" };
+    }
+    if (["swap", "financing", "financing fee", "rollover"].includes(normalized)) {
+      return { csvColumn: header, tradeField: "swap" };
+    }
+    if (["fees", "fee", "charges", "other fees"].includes(normalized)) {
+      return { csvColumn: header, tradeField: "otherFees" };
+    }
     if (
-      ["commission", "fees", "swap", "charges"].includes(normalized)
+      ["initial risk", "initial risk amount", "risk amount", "initialrisk"].includes(normalized)
     ) {
-      return { csvColumn: header, tradeField: "fees" };
+      return { csvColumn: header, tradeField: "initialRiskAmount" };
     }
     if (
       ["open time", "open date", "tradedat", "trade time", "time", "datestart"].includes(normalized)
@@ -282,24 +344,208 @@ export function autoMapColumns(
 /**
  * Normalize direction string to LONG/SHORT.
  */
-function normalizeDirection(val: string): "LONG" | "SHORT" {
+export function normalizeDirectionValue(
+  val: string | null
+): "LONG" | "SHORT" | null {
+  if (!val) return null;
   const v = val.toLowerCase().trim();
   if (["long", "buy", "l", "b"].includes(v)) return "LONG";
   if (["short", "sell", "s", "sh"].includes(v)) return "SHORT";
   // Try to infer from type column like "buy-limit", "sell-stop"
   if (v.includes("buy") || v.includes("long")) return "LONG";
   if (v.includes("sell") || v.includes("short")) return "SHORT";
-  return "LONG"; // fallback
+  return null;
+}
+
+export type CsvSourceKind =
+  | "TRADE_HISTORY"
+  | "ORDER_HISTORY_REQUIRES_LOT_MATCHING"
+  | "EXECUTION_HISTORY_REQUIRES_POSITION_MATCHING"
+  | "UNKNOWN";
+
+export function detectCsvSourceKind(headers: string[]): CsvSourceKind {
+  const normalized = new Set(
+    headers.map((header) => header.toLowerCase().trim())
+  );
+  const chineseOrderFields = [
+    "方向",
+    "代码",
+    "交易状态",
+    "成交数量",
+    "成交价格",
+    "成交时间",
+    "合计费用",
+  ];
+  if (
+    chineseOrderFields.every((field) => normalized.has(field))
+  ) {
+    return "ORDER_HISTORY_REQUIRES_LOT_MATCHING";
+  }
+
+  const hasGenericOrderStatus =
+    normalized.has("order status") || normalized.has("order state");
+  const hasGenericFilledQuantity =
+    normalized.has("filled quantity") ||
+    normalized.has("filled qty") ||
+    normalized.has("executed quantity") ||
+    normalized.has("executed qty");
+  const hasGenericFillPrice =
+    normalized.has("average fill price") ||
+    normalized.has("avg fill price") ||
+    normalized.has("fill price") ||
+    normalized.has("execution price");
+  if (
+    normalized.has("order id") &&
+    hasGenericOrderStatus &&
+    hasGenericFilledQuantity &&
+    hasGenericFillPrice
+  ) {
+    return "ORDER_HISTORY_REQUIRES_LOT_MATCHING";
+  }
+
+  const executionHistoryFields = [
+    "coin",
+    "execution price",
+    "size tokens",
+    "side",
+    "start position",
+    "closed pnl",
+    "order id",
+    "trade id",
+  ];
+  if (
+    executionHistoryFields.every((field) => normalized.has(field))
+  ) {
+    return "EXECUTION_HISTORY_REQUIRES_POSITION_MATCHING";
+  }
+
+  const hasIdentity =
+    normalized.has("id") ||
+    normalized.has("ticket") ||
+    normalized.has("trade id") ||
+    normalized.has("order");
+  const hasResult =
+    normalized.has("rpnl") ||
+    normalized.has("pnl") ||
+    normalized.has("profit") ||
+    normalized.has("net profit");
+  const hasTradeTime =
+    normalized.has("datestart") ||
+    normalized.has("open time") ||
+    normalized.has("trade time");
+  if (hasIdentity && hasResult && hasTradeTime) return "TRADE_HISTORY";
+
+  return "UNKNOWN";
+}
+
+/**
+ * Detect a platform only when the file type supplies enough evidence.
+ *
+ * Generic order-history columns overlap heavily across brokers, so they must
+ * not inherit a platform name from the loose three-column broker heuristic.
+ */
+export function detectImportPlatform(
+  headers: string[],
+  sourceKind: CsvSourceKind = detectCsvSourceKind(headers)
+): string | null {
+  if (sourceKind === "EXECUTION_HISTORY_REQUIRES_POSITION_MATCHING") {
+    return "hyperliquid";
+  }
+  if (sourceKind === "ORDER_HISTORY_REQUIRES_LOT_MATCHING") {
+    return null;
+  }
+  return detectBroker(headers);
 }
 
 /**
  * Parse a numeric value, returning null if not parseable.
  */
-function parseNum(val: string | null | undefined): number | null {
-  if (!val) return null;
-  const cleaned = val.toString().replace(/[,$€£¥\s]/g, "");
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? null : num;
+export function parseNumericValue(
+  val: string | null | undefined
+): number | null {
+  if (val === null || val === undefined) return null;
+  let cleaned = val.toString().trim();
+  if (!cleaned) return null;
+
+  const negativeByParentheses = /^\(.*\)$/.test(cleaned);
+  cleaned = cleaned.replace(/[()]/g, "").replace(/\s/g, "");
+  cleaned = cleaned.replace(/[^\d,.\-+]/g, "");
+
+  const commaIndex = cleaned.lastIndexOf(",");
+  const dotIndex = cleaned.lastIndexOf(".");
+  if (commaIndex >= 0 && dotIndex >= 0) {
+    cleaned =
+      commaIndex > dotIndex
+        ? cleaned.replace(/\./g, "").replace(",", ".")
+        : cleaned.replace(/,/g, "");
+  } else if (commaIndex >= 0) {
+    const decimalPlaces = cleaned.length - commaIndex - 1;
+    cleaned =
+      decimalPlaces > 0 && decimalPlaces <= 2
+        ? cleaned.replace(",", ".")
+        : cleaned.replace(/,/g, "");
+  }
+
+  const num = Number(cleaned);
+  if (!Number.isFinite(num)) return null;
+  return negativeByParentheses && num > 0 ? -num : num;
+}
+
+function stableFingerprint(parts: Array<string | number | null>): string {
+  return createHash("sha256")
+    .update(JSON.stringify(parts))
+    .digest("hex");
+}
+
+function normalizedText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+export function normalizeCurrencyCode(
+  value: string | null | undefined
+): string | null {
+  const normalized = normalizedText(value)?.toUpperCase();
+  if (!normalized || !/^[A-Z0-9]{3,10}$/.test(normalized)) return null;
+  return normalized;
+}
+
+function normalizedSymbol(value: string | null): {
+  source: string | null;
+  normalized: string;
+} {
+  const source = normalizedText(value);
+  if (!source) return { source: null, normalized: "UNKNOWN" };
+  const withoutPrefix = source.includes(":")
+    ? source.split(":").pop() ?? source
+    : source;
+  return {
+    source,
+    normalized: withoutPrefix.trim().toUpperCase(),
+  };
+}
+
+function getMappedValue(
+  row: CsvRow,
+  mappings: ColumnMapping[],
+  fieldName: string
+): string | null {
+  const mapping = mappings.find((item) => item.tradeField === fieldName);
+  if (!mapping) return null;
+  return normalizedText(row[mapping.csvColumn]);
+}
+
+function getSignedAdjustment(
+  row: CsvRow,
+  mappings: ColumnMapping[],
+  fieldName: string
+): number | null {
+  const values = mappings
+    .filter((item) => item.tradeField === fieldName)
+    .map((item) => parseNumericValue(row[item.csvColumn]))
+    .filter((value): value is number => value !== null);
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0);
 }
 
 /**
@@ -308,52 +554,76 @@ function parseNum(val: string | null | undefined): number | null {
 export function applyMapping(
   rows: CsvRow[],
   mappings: ColumnMapping[],
-  tradingAccountId: string,
-  importBatch: string
+  tradingAccountId: string
 ): MappedTrade[] {
   return rows.map((row, index) => {
-    const getField = (fieldName: string): string | null => {
-      // Find all columns that map to this field
-      const cols = mappings.filter((m) => m.tradeField === fieldName && m.tradeField !== "skip");
-      if (cols.length === 0) return null;
-      // Prefer non-empty, non-zero values (handles uPnL=0 vs rPnL=-250)
-      for (const m of cols) {
-        const val = row[m.csvColumn]?.trim();
-        if (val && val !== "" && val !== "0" && val !== "0.00") return val;
-      }
-      // Fallback: return the first column's value
-      const first = cols[0];
-      return row[first.csvColumn]?.trim() ?? null;
-    };
-
-    // Clean symbol: strip broker prefixes like "OANDA:"
-    const rawSymbol = getField("symbol") ?? "UNKNOWN";
-    const symbol = rawSymbol.includes(":")
-      ? rawSymbol.split(":").pop() ?? rawSymbol
-      : rawSymbol;
-    const directionStr = getField("direction") ?? "LONG";
+    const getField = (fieldName: string) =>
+      getMappedValue(row, mappings, fieldName);
+    const { source: sourceSymbol, normalized: symbol } =
+      normalizedSymbol(getField("symbol"));
+    const sourceTradeId = getField("sourceTradeId");
+    const direction = normalizeDirectionValue(getField("direction"));
     const tradedAtStr = getField("tradedAt");
+    const closedAtStr = getField("closedAt");
+    const entryPrice = parseNumericValue(getField("entryPrice"));
+    const exitPrice = parseNumericValue(getField("exitPrice"));
+    const positionSize = parseNumericValue(getField("positionSize"));
+    const pnl = parseNumericValue(getField("pnl"));
+    const rawResultCurrency = getField("resultCurrency");
+    const resultCurrency = normalizeCurrencyCode(rawResultCurrency);
+    const commission = getSignedAdjustment(row, mappings, "commission");
+    const swap = getSignedAdjustment(row, mappings, "swap");
+    const otherFees = getSignedAdjustment(row, mappings, "otherFees");
+    const validationErrors: string[] = [];
 
-    // Create idempotency key from available fields
-    const idKey = `${symbol}|${directionStr}|${tradedAtStr ?? ""}|${index}`;
+    if (!sourceSymbol || symbol === "UNKNOWN") validationErrors.push("Missing symbol");
+    if (!direction) validationErrors.push("Unrecognized direction");
+    if (!tradedAtStr) validationErrors.push("Missing trade time");
+    if (rawResultCurrency && !resultCurrency) {
+      validationErrors.push("Invalid result currency");
+    }
+
+    const fingerprint = stableFingerprint([
+      tradingAccountId,
+      sourceTradeId,
+      symbol,
+      direction,
+      tradedAtStr,
+      closedAtStr,
+      entryPrice,
+      exitPrice,
+      positionSize,
+      pnl,
+      resultCurrency,
+    ]);
+    const idKey = sourceTradeId
+      ? `source:${tradingAccountId}:${sourceTradeId}`
+      : `fingerprint:${fingerprint}`;
 
     return {
+      sourceSymbol,
       symbol,
-      direction: normalizeDirection(directionStr),
-      entryPrice: parseNum(getField("entryPrice")),
-      exitPrice: parseNum(getField("exitPrice")),
-      stopLoss: parseNum(getField("stopLoss")),
-      targetPrice: parseNum(getField("targetPrice")),
-      positionSize: parseNum(getField("positionSize")),
-      pnl: parseNum(getField("pnl")),
-      fees: parseNum(getField("fees")),
-      actualR: parseNum(getField("actualR")),
+      sourceTradeId,
+      direction,
+      entryPrice,
+      exitPrice,
+      stopLoss: parseNumericValue(getField("stopLoss")),
+      targetPrice: parseNumericValue(getField("targetPrice")),
+      positionSize,
+      initialRiskAmount: parseNumericValue(getField("initialRiskAmount")),
+      pnl,
+      resultCurrency,
+      commission,
+      swap,
+      otherFees,
+      actualR: parseNumericValue(getField("actualR")),
       tradedAt: tradedAtStr,
-      closedAt: getField("closedAt"),
+      closedAt: closedAtStr,
       strategy: getField("strategy"),
       notes: getField("notes"),
       idempotencyKey: idKey,
       rowIndex: index,
+      validationErrors,
     };
   });
 }

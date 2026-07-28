@@ -1,0 +1,3 @@
+order id,symbol,side,order status,filled quantity,average fill price,filled time,total fees
+ORD-SYN-001,AAPL,buy,filled,10,210.50,2026-07-01 14:30:00,1.25
+ORD-SYN-002,AAPL,sell,filled,10,214.00,2026-07-02 15:00:00,1.25

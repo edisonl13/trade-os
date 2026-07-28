@@ -101,6 +101,75 @@ export const TradeStatus = {
 } as const;
 
 /**
+ * One confirmed import attempt and the evidence needed to audit it.
+ *
+ * Preview requests do not create rows. A row is created only after the file
+ * passes preflight and the user confirms the import.
+ */
+export const importBatches = sqliteTable("import_batch", {
+  id: text("id").primaryKey().notNull(),
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tradingAccountId: text("tradingAccountId")
+    .notNull()
+    .references(() => tradingAccounts.id, { onDelete: "cascade" }),
+
+  /* Source evidence */
+  originalFileName: text("originalFileName").notNull(),
+  fileFormat: text("fileFormat").notNull(),
+  fileHash: text("fileHash").notNull(),
+  fileSize: integer("fileSize", { mode: "number" }).notNull(),
+  sourcePlatform: text("sourcePlatform"),
+  platformDetection: text("platformDetection", {
+    enum: ["DETECTED", "USER_SELECTED", "UNKNOWN"],
+  })
+    .notNull()
+    .default("UNKNOWN"),
+  sourceKind: text("sourceKind").notNull(),
+  adapterVersion: text("adapterVersion").notNull(),
+
+  /* User-confirmed interpretation */
+  sourceTimezone: text("sourceTimezone"),
+  sourceTimezoneConfirmed: integer("sourceTimezoneConfirmed", {
+    mode: "boolean",
+  })
+    .notNull()
+    .default(false),
+  pnlMode: text("pnlMode", { enum: ["GROSS", "NET", "UNKNOWN"] })
+    .notNull()
+    .default("UNKNOWN"),
+  feeSignConvention: text("feeSignConvention", {
+    enum: ["SIGNED", "COSTS_POSITIVE", "UNKNOWN"],
+  })
+    .notNull()
+    .default("UNKNOWN"),
+  feesConfirmed: integer("feesConfirmed", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  accountCurrency: text("accountCurrency"),
+  resultCurrencies: text("resultCurrencies").notNull().default("[]"),
+  resultCurrencySource: text("resultCurrencySource", {
+    enum: ["SOURCE", "ACCOUNT", "MIXED", "UNKNOWN"],
+  })
+    .notNull()
+    .default("UNKNOWN"),
+
+  /* Reconciliation */
+  totalRows: integer("totalRows", { mode: "number" }).notNull().default(0),
+  validRows: integer("validRows", { mode: "number" }).notNull().default(0),
+  invalidRows: integer("invalidRows", { mode: "number" }).notNull().default(0),
+  duplicateRows: integer("duplicateRows", { mode: "number" }).notNull().default(0),
+  insertedRows: integer("insertedRows", { mode: "number" }).notNull().default(0),
+  status: text("status", {
+    enum: ["PROCESSING", "COMPLETED", "PARTIAL", "FAILED"],
+  })
+    .notNull()
+    .default("PROCESSING"),
+  failureCode: text("failureCode"),
+  createdAt: integer("createdAt", { mode: "number" }).notNull(),
+  completedAt: integer("completedAt", { mode: "number" }),
+});
+
+/**
  * Core trade record.
  */
 export const trades = sqliteTable("trade", {
@@ -110,6 +179,8 @@ export const trades = sqliteTable("trade", {
 
   /* Identity */
   symbol: text("symbol").notNull(),
+  sourceSymbol: text("sourceSymbol"),
+  sourceTradeId: text("sourceTradeId"),
   direction: text("direction", { enum: ["LONG", "SHORT"] }).notNull(),
 
   /* Plan */
@@ -122,16 +193,41 @@ export const trades = sqliteTable("trade", {
   actualEntry: real("actualEntry"),
   actualExit: real("actualExit"),
   positionSize: real("positionSize"),
+  initialRiskAmount: real("initialRiskAmount"),
+
+  /*
+   * Legacy combined fee field. Keep it until imported records have been
+   * reconciled against real broker exports.
+   */
   fees: real("fees").default(0),
+  commission: real("commission"),
+  swap: real("swap"),
+  otherFees: real("otherFees"),
 
   /* Results */
+  /*
+   * Legacy P&L field. New imports must also describe its meaning through
+   * pnlMode and populate netPnl only when the net result is known.
+   */
   pnl: real("pnl"),
+  grossPnl: real("grossPnl"),
+  netPnl: real("netPnl"),
+  pnlMode: text("pnlMode", { enum: ["GROSS", "NET", "UNKNOWN"] })
+    .notNull()
+    .default("UNKNOWN"),
+  resultCurrency: text("resultCurrency"),
+  resultCurrencySource: text("resultCurrencySource", {
+    enum: ["SOURCE", "ACCOUNT", "USER_CONFIRMED", "UNKNOWN"],
+  })
+    .notNull()
+    .default("UNKNOWN"),
   actualR: real("actualR"),
   returnPercent: real("returnPercent"),
 
   /* Time */
   tradedAt: integer("tradedAt", { mode: "number" }).notNull(),
   closedAt: integer("closedAt", { mode: "number" }),
+  sourceTimezone: text("sourceTimezone"),
   timezone: text("timezone").notNull().default("UTC"),
 
   /* Derived time dimensions */
@@ -147,9 +243,16 @@ export const trades = sqliteTable("trade", {
   status: text("status", { enum: ["OPEN", "CLOSED"] }).notNull().default("OPEN"),
 
   /* Audit */
-  source: text("source", { enum: ["CSV", "SCREENSHOT", "MANUAL"] }).notNull().default("MANUAL"),
+  source: text("source", {
+    enum: ["CSV", "MT4_HTML", "SCREENSHOT", "MANUAL"],
+  })
+    .notNull()
+    .default("MANUAL"),
   importBatch: text("importBatch"),
   idempotencyKey: text("idempotencyKey"),
+  confirmedByUser: integer("confirmedByUser", { mode: "boolean" })
+    .notNull()
+    .default(true),
   createdAt: integer("createdAt", { mode: "number" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "number" }).notNull(),
 });

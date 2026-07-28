@@ -108,7 +108,19 @@ interface RecentTrade {
   status: "OPEN" | "CLOSED";
 }
 
+interface AnalyticsDataQuality {
+  closedTrades: number;
+  eligibleNetPnlTrades: number;
+  incompleteResultTrades: number;
+  unknownCurrencyTrades: number;
+  resultCurrencies: string[];
+  resultCurrency: string | null;
+  currencyComplete: boolean;
+  pnlComplete: boolean;
+}
+
 interface OverviewResponse {
+  dataQuality: AnalyticsDataQuality;
   kpi: KPIData;
   equityCurve: CumulativePnLPoint[];
   directions: BreakdownItem[];
@@ -120,11 +132,25 @@ interface OverviewResponse {
 
 let overviewCache: OverviewResponse | null = null;
 
-function formatUSD(value: number, includePlus = true): string {
+function formatMoney(
+  value: number,
+  currency: string,
+  includePlus = true
+): string {
   const absolute = Math.abs(value);
   const sign = value < 0 ? "-" : includePlus ? "+" : "";
-  if (absolute >= 1000) return `${sign}$${(absolute / 1000).toFixed(1)}K`;
-  return `${sign}$${absolute.toFixed(2)}`;
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    return `${sign}${absolute.toLocaleString(undefined, {
+      maximumFractionDigits: 8,
+    })} ${currency}`;
+  }
+  const formatted = new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    notation: absolute >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: absolute >= 1000 ? 1 : 2,
+  }).format(absolute);
+  return `${sign}${formatted}`;
 }
 
 function TrendBadge({
@@ -284,6 +310,9 @@ export default function OverviewPage() {
   const [calendar] = useState<CalendarDay[]>([]);
   const [trends, setTrends] = useState<KpiTrends | null>(overviewCache?.trends ?? null);
   const [recentTrades, setRecentTrades] = useState<RecentTrade[]>(overviewCache?.recentTrades ?? []);
+  const [dataQuality, setDataQuality] = useState<AnalyticsDataQuality | null>(
+    overviewCache?.dataQuality ?? null
+  );
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(new Date().getMonth() + 1);
   const initialDashboardLoad = useRef(false);
@@ -305,6 +334,7 @@ export default function OverviewPage() {
       setInstruments(data.instruments);
       setTrends(data.trends);
       setRecentTrades(data.recentTrades ?? []);
+      setDataQuality(data.dataQuality);
     } catch (error) {
       console.error("Failed to fetch dashboard data", error);
       setDataError(true);
@@ -322,6 +352,8 @@ export default function OverviewPage() {
   }, [fetchAllData, router, status]);
 
   const hasData = Boolean(kpi && kpi.totalTrades > 0);
+  const pnlAvailable = dataQuality?.pnlComplete === true;
+  const resultCurrency = dataQuality?.resultCurrency ?? "USD";
   const currentPnL = kpi?.totalPnL ?? 0;
   const monthPnL = 0;
   const monthTrades = 0;
@@ -487,8 +519,8 @@ export default function OverviewPage() {
                         <span className="text-[10px] font-bold text-[#FFB84D]">{t("common.feesExcluded")}</span>
                       </div>
                       <p className="mt-2 text-[12px] text-[#718094]">{t("overview.cumulativeCaption")}</p>
-                      <strong className={cn("mt-3 block font-data text-[48px] font-extrabold tracking-[-0.05em]", currentPnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
-                        {formatUSD(currentPnL)}
+                      <strong className={cn("mt-3 block font-data text-[48px] font-extrabold tracking-[-0.05em]", !pnlAvailable ? "text-[#718094]" : currentPnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
+                        {pnlAvailable ? formatMoney(currentPnL, resultCurrency) : "—"}
                       </strong>
                     </div>
                     <div className="text-left sm:text-right">
@@ -496,13 +528,13 @@ export default function OverviewPage() {
                         {kpi?.closedTrades} {t("overview.closed")} · {kpi?.openTrades} {t("overview.open")}
                       </p>
                       <p className="mt-1 text-[10px] text-[#59697C]">
-                        {t("overview.recordedFees")}: {formatUSD(-(kpi?.totalFees ?? 0), false)}
+                        {t("overview.recordedFees")}: {formatMoney(-(kpi?.totalFees ?? 0), resultCurrency, false)}
                       </p>
                     </div>
                   </div>
 
                   <div className="mt-2 h-[200px]">
-                    {chartData.length > 0 ? (
+                    {pnlAvailable && chartData.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={chartData} margin={{ top: 12, right: 8, left: 4, bottom: 0 }}>
                           <defs>
@@ -524,7 +556,7 @@ export default function OverviewPage() {
                             tickLine={false}
                             width={62}
                             tick={{ fontSize: 10, fill: "#59697C" }}
-                            tickFormatter={(value: number) => formatUSD(value, false)}
+                            tickFormatter={(value: number) => formatMoney(value, resultCurrency, false)}
                           />
                           <ReferenceLine y={0} stroke="#9AA8B8" strokeOpacity={0.22} strokeDasharray="4 4" />
                           <Tooltip
@@ -535,8 +567,8 @@ export default function OverviewPage() {
                               return (
                                 <div className="rounded-md border border-[#16D9FF]/25 bg-[#070A10]/95 p-3 text-[12px] shadow-[0_0_22px_rgba(22,217,255,0.12)] backdrop-blur-xl">
                                   <p className="font-bold text-[#9AA8B8]">{point.date}</p>
-                                  <p className="mt-1"><span className="text-[#718094]">{t("overview.tradePnl")} </span><strong className={point.pnl >= 0 ? "text-[#20D785]" : "text-[#FF4D64]"}>{formatUSD(point.pnl)}</strong></p>
-                                  <p><span className="text-[#718094]">{t("overview.cumulativePnl")} </span><strong className={point.cumulativePnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]"}>{formatUSD(point.cumulativePnL)}</strong></p>
+                                  <p className="mt-1"><span className="text-[#718094]">{t("overview.tradePnl")} </span><strong className={point.pnl >= 0 ? "text-[#20D785]" : "text-[#FF4D64]"}>{formatMoney(point.pnl, resultCurrency)}</strong></p>
+                                  <p><span className="text-[#718094]">{t("overview.cumulativePnl")} </span><strong className={point.cumulativePnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]"}>{formatMoney(point.cumulativePnL, resultCurrency)}</strong></p>
                                 </div>
                               );
                             }}
@@ -555,8 +587,16 @@ export default function OverviewPage() {
                       <div className="flex h-full items-center justify-center border-y border-[#9AA8B8]/8">
                         <div className="text-center">
                           <AlertTriangle className="mx-auto h-5 w-5 text-[#FFB84D]" />
-                          <p className="mt-2 text-[13px] font-bold text-[#FFB84D]">{t("overview.pnlIncomplete")}</p>
-                          <p className="mt-1 text-[11px] text-[#718094]">{t("overview.pnlIncompleteDesc")}</p>
+                          <p className="mt-2 text-[13px] font-bold text-[#FFB84D]">
+                            {t(dataQuality?.currencyComplete === false
+                              ? "overview.currencyIncomplete"
+                              : "overview.pnlIncomplete")}
+                          </p>
+                          <p className="mt-1 text-[11px] text-[#718094]">
+                            {t(dataQuality?.currencyComplete === false
+                              ? "overview.currencyIncompleteDesc"
+                              : "overview.pnlIncompleteDesc")}
+                          </p>
                         </div>
                       </div>
                     )}
@@ -652,11 +692,11 @@ export default function OverviewPage() {
                   <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[#9AA8B8]/10 pt-4">
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#59697C]">{t("overview.bestTrade")}</span>
-                      <strong className="mt-1 block text-[16px] text-[#20D785]">{kpi?.bestTrade == null ? "—" : formatUSD(kpi.bestTrade)}</strong>
+                      <strong className="mt-1 block text-[16px] text-[#20D785]">{kpi?.bestTrade == null ? "—" : formatMoney(kpi.bestTrade, resultCurrency)}</strong>
                     </div>
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#59697C]">{t("overview.worstTrade")}</span>
-                      <strong className="mt-1 block text-[16px] text-[#FF4D64]">{kpi?.worstTrade == null ? "—" : formatUSD(kpi.worstTrade)}</strong>
+                      <strong className="mt-1 block text-[16px] text-[#FF4D64]">{kpi?.worstTrade == null ? "—" : formatMoney(kpi.worstTrade, resultCurrency)}</strong>
                     </div>
                   </div>
 
@@ -696,7 +736,7 @@ export default function OverviewPage() {
                               <p className="mt-1 text-[12px] text-[#718094]">{direction?.trades ?? 0} {t("kpi.sample")} · {t("overview.winRate")} {direction?.winRate ?? 0}%</p>
                             </div>
                             <strong className={cn("text-[18px]", (direction?.totalPnL ?? 0) >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
-                              {formatUSD(direction?.totalPnL ?? 0)}
+                              {formatMoney(direction?.totalPnL ?? 0, resultCurrency)}
                             </strong>
                           </div>
                           <div className="mt-4 h-1 overflow-hidden rounded-full bg-white/5">
@@ -719,7 +759,7 @@ export default function OverviewPage() {
                     <div className="flex items-center gap-2 text-[12px] text-[#718094]">
                       <Clock3 className="h-4 w-4 text-[#16D9FF]" />
                       {strongestHeatmap
-                        ? `${strongestHeatmap.trades} ${t("kpi.sample")} · ${formatUSD(strongestHeatmap.value)}`
+                        ? `${strongestHeatmap.trades} ${t("kpi.sample")} · ${formatMoney(strongestHeatmap.value, resultCurrency)}`
                         : t("overview.keepLogging")}
                     </div>
                   </div>
@@ -753,7 +793,7 @@ export default function OverviewPage() {
                           <span className="mt-0.5 block text-[10px] text-[#59697C]">{trade.status === "CLOSED" ? t("overview.closed") : t("overview.open")}</span>
                         </span>
                         <strong className={cn("font-data text-[12px]", trade.pnl == null ? "text-[#59697C]" : trade.pnl >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>
-                          {trade.pnl == null ? "—" : formatUSD(trade.pnl)}
+                          {trade.pnl == null ? "—" : formatMoney(trade.pnl, resultCurrency)}
                         </strong>
                       </Link>
                     ))}
@@ -807,7 +847,7 @@ export default function OverviewPage() {
                       return (
                         <div
                           key={day}
-                          title={record ? `${record.trades} ${t("kpi.sample")} · ${formatUSD(record.pnl)}` : undefined}
+                          title={record ? `${record.trades} ${t("kpi.sample")} · ${formatMoney(record.pnl, resultCurrency)}` : undefined}
                           className={cn(
                             "flex min-h-10 items-center justify-center rounded text-[11px] font-extrabold",
                             !record && "bg-white/[0.02] text-[#435164]",
@@ -826,7 +866,7 @@ export default function OverviewPage() {
                       <CalendarDays className="h-5 w-5" />
                     </div>
                     <p className="mt-5 text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#59697C]">{t("overview.monthlyPnl")}</p>
-                    <strong className={cn("mt-1 block text-[27px] font-extrabold", monthPnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>{formatUSD(monthPnL)}</strong>
+                    <strong className={cn("mt-1 block text-[27px] font-extrabold", monthPnL >= 0 ? "text-[#20D785]" : "text-[#FF4D64]")}>{formatMoney(monthPnL, resultCurrency)}</strong>
                     <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[#9AA8B8]/10 pt-4">
                       <div>
                         <span className="text-[10px] text-[#59697C]">{t("common.total")}</span>

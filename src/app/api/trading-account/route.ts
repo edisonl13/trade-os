@@ -102,9 +102,15 @@ export async function PUT(request: NextRequest) {
         ),
       });
       account = result ?? null;
+      if (!account) {
+        return NextResponse.json(
+          { error: "Trading account not found or access denied" },
+          { status: 403 }
+        );
+      }
     }
 
-    if (!account) {
+    if (!body.id && !account) {
       // Fall back to the first account owned by this user
       const result = await db.query.tradingAccounts.findFirst({
         where: eq(tradingAccounts.userId, session.user.id),

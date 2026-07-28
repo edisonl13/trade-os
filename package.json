@@ -11,7 +11,13 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "check:stage1-import": "tsx scripts/stage1-import-check.ts",
+    "check:import-adapters": "tsx scripts/check-import-adapter-contracts.ts",
+    "check:migration-copy": "tsx scripts/verify-migration-copy.ts",
+    "check:account-isolation-copy": "tsx scripts/check-account-isolation-copy.ts",
+    "profile:stage1-samples": "tsx scripts/profile-stage1-samples.ts",
+    "reconcile:stage1-imports": "tsx scripts/reconcile-stage1-imports.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",

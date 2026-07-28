@@ -15,6 +15,11 @@ export interface TradeRecord {
   actualEntry: number | null;
   actualExit: number | null;
   pnl: number | null;
+  netPnl?: number | null;
+  pnlMode?: "GROSS" | "NET" | "UNKNOWN";
+  resultCurrency?: string | null;
+  resultCurrencySource?: "SOURCE" | "ACCOUNT" | "USER_CONFIRMED" | "UNKNOWN";
+  confirmedByUser?: boolean;
   actualR: number | null;
   fees: number | null;
   tradedAt: number;
@@ -23,6 +28,70 @@ export interface TradeRecord {
   session: string | null;
   status: "OPEN" | "CLOSED";
   strategy: string | null;
+}
+
+export interface AnalyticsDataQuality {
+  closedTrades: number;
+  eligibleNetPnlTrades: number;
+  incompleteResultTrades: number;
+  unknownCurrencyTrades: number;
+  resultCurrencies: string[];
+  resultCurrency: string | null;
+  currencyComplete: boolean;
+  pnlComplete: boolean;
+}
+
+export function getConfirmedNetPnl(trade: TradeRecord): number | null {
+  if (trade.status !== "CLOSED" || trade.confirmedByUser === false) return null;
+  return typeof trade.netPnl === "number" && Number.isFinite(trade.netPnl)
+    ? trade.netPnl
+    : null;
+}
+
+export function computeAnalyticsDataQuality(
+  trades: TradeRecord[]
+): AnalyticsDataQuality {
+  const closed = trades.filter((trade) => trade.status === "CLOSED");
+  const eligible = closed.filter(
+    (trade) => getConfirmedNetPnl(trade) !== null
+  );
+  const incompleteResultTrades = closed.length - eligible.length;
+  const normalizedCurrencies = closed.map((trade) => {
+    const currency = trade.resultCurrency?.trim().toUpperCase();
+    return currency && /^[A-Z0-9]{3,10}$/.test(currency)
+      ? currency
+      : null;
+  });
+  const unknownCurrencyTrades = normalizedCurrencies.filter(
+    (currency) => currency === null
+  ).length;
+  const resultCurrencies = [
+    ...new Set(
+      normalizedCurrencies.filter(
+        (currency): currency is string => currency !== null
+      )
+    ),
+  ].sort();
+  const currencyComplete =
+    closed.length > 0 &&
+    unknownCurrencyTrades === 0 &&
+    resultCurrencies.length === 1;
+
+  return {
+    closedTrades: closed.length,
+    eligibleNetPnlTrades: eligible.length,
+    incompleteResultTrades,
+    unknownCurrencyTrades,
+    resultCurrencies,
+    resultCurrency:
+      resultCurrencies.length === 1 ? resultCurrencies[0] : null,
+    currencyComplete,
+    pnlComplete:
+      closed.length > 0 &&
+      eligible.length === closed.length &&
+      incompleteResultTrades === 0 &&
+      currencyComplete,
+  };
 }
 
 /* ──────────────────────────────
@@ -872,13 +941,11 @@ const TREND_WINDOW = 10; // recent N trades for trend comparison
  * @param trades      All trades sorted chronologically
  * @param extractFn   Function that extracts a numeric value from a set of trades
  * @param formatter   Function to format the change value as display string
- * @param higherIsBetter  Whether a higher value is positive (green) or negative (red)
  */
 export function computeKpiTrend(
   trades: TradeRecord[],
   extractFn: (subset: TradeRecord[]) => number | null,
-  formatter: (diff: number) => string,
-  _higherIsBetter: boolean = true
+  formatter: (diff: number) => string
 ): KpiTrend {
   const closed = trades
     .filter((t) => t.status === "CLOSED" && t.pnl !== null)

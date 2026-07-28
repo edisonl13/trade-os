@@ -16,6 +16,8 @@ import {
   computeUserLevel,
   computeKpiTrend,
   computeInstrumentBreakdown,
+  computeAnalyticsDataQuality,
+  getConfirmedNetPnl,
   type TradeRecord,
 } from "@/lib/analytics";
 
@@ -55,14 +57,14 @@ export async function GET(request: NextRequest) {
   if (from) conditions.push(gte(trades.tradedAt, parseInt(from)));
   if (to) conditions.push(lte(trades.tradedAt, parseInt(to)));
 
-  const allTrades = (await db.query.trades.findMany({
+  const rawTrades = (await db.query.trades.findMany({
     where: and(...conditions),
     orderBy: (trades, { asc }) => [asc(trades.tradedAt)],
   })) as unknown as TradeRecord[];
 
   // Re-compute derived time fields at query time so changing the account
   // timezone also updates existing trades.
-  for (const trade of allTrades) {
+  for (const trade of rawTrades) {
     try {
       const utcMs = trade.tradedAt;
       const hour = getHourInTz(utcMs, tz);
@@ -72,6 +74,15 @@ export async function GET(request: NextRequest) {
       // Keep the stored fallback if the account has an invalid legacy timezone.
     }
   }
+
+  const dataQuality = computeAnalyticsDataQuality(rawTrades);
+  const allTrades = rawTrades.map((trade) => ({
+    ...trade,
+    // Do not allow a partial collection to look like a complete performance
+    // history. Once every closed trade has confirmed net P&L, all result
+    // analytics become eligible together.
+    pnl: dataQuality.pnlComplete ? getConfirmedNetPnl(trade) : null,
+  }));
 
   // Get account's initial balance for drawdown calculation
   const initialBalance = account?.initialBalance ?? 0;
@@ -86,7 +97,7 @@ export async function GET(request: NextRequest) {
       profitFactor: computeKpiTrend(allTrades, (rows) => metric(rows, "profitFactor"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}`),
       avgRR: computeKpiTrend(allTrades, (rows) => metric(rows, "avgRR"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
       expectancy: computeKpiTrend(allTrades, (rows) => metric(rows, "expectancy"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}R`),
-      maxDrawdown: computeKpiTrend(allTrades, (rows) => metric(rows, "maxDrawdownPercent"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`, false),
+      maxDrawdown: computeKpiTrend(allTrades, (rows) => metric(rows, "maxDrawdownPercent"), (diff) => `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} pp`),
     };
   };
 
@@ -107,8 +118,11 @@ export async function GET(request: NextRequest) {
         }));
 
       return NextResponse.json({
+        dataQuality,
         kpi: computeKPI(allTrades, initialBalance),
-        equityCurve: computeCumulativePnL(allTrades, "day"),
+        equityCurve: dataQuality.pnlComplete
+          ? computeCumulativePnL(allTrades, "day")
+          : [],
         directions: computeDirectionBreakdown(allTrades),
         heatmap: computeHeatmap(allTrades, tz),
         instruments: computeInstrumentBreakdown(allTrades),
@@ -119,8 +133,11 @@ export async function GET(request: NextRequest) {
 
     case "analyticsBundle": {
       return NextResponse.json({
+        dataQuality,
         kpi: computeKPI(allTrades, initialBalance),
-        equityCurve: computeCumulativePnL(allTrades, granularity),
+        equityCurve: dataQuality.pnlComplete
+          ? computeCumulativePnL(allTrades, granularity)
+          : [],
         sessions: computeSessionBreakdown(allTrades),
         weekdays: computeWeekdayBreakdown(allTrades),
         directions: computeDirectionBreakdown(allTrades),
@@ -131,7 +148,7 @@ export async function GET(request: NextRequest) {
 
     case "kpi": {
       const kpi = computeKPI(allTrades, initialBalance);
-      return NextResponse.json(kpi);
+      return NextResponse.json({ ...kpi, dataQuality });
     }
 
     case "trends": {
@@ -139,7 +156,9 @@ export async function GET(request: NextRequest) {
     }
 
     case "equity": {
-      const curve = computeCumulativePnL(allTrades, granularity);
+      const curve = dataQuality.pnlComplete
+        ? computeCumulativePnL(allTrades, granularity)
+        : [];
       return NextResponse.json(curve);
     }
 
