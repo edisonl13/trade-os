@@ -13,7 +13,14 @@ import { users, accounts, sessions, verificationTokens } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
+const previewSecret =
+  process.env.VERCEL_ENV === "preview"
+    ? `trade-os-preview-${process.env.VERCEL_GIT_COMMIT_SHA ?? "local"}`
+    : undefined;
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  secret: process.env.AUTH_SECRET ?? previewSecret,
+  trustHost: true,
   adapter: DrizzleAdapter(db, {
     usersTable: users,
     accountsTable: accounts,
