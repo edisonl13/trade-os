@@ -365,10 +365,11 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
   const requiresTimezone = preview?.requiredConfirmations.sourceTimezone ?? false;
   const requiresPnlChoice =
     preview?.interpretation.requiresPnlConfirmation ?? true;
-  const requiresFeeChoice =
+  const showFeeChoice =
     pnlMode === "GROSS" &&
-    Boolean(preview?.interpretation.hasFeeValues) &&
-    feeSignConvention === "";
+    Boolean(preview?.interpretation.hasFeeValues);
+  const requiresFeeChoice =
+    showFeeChoice && feeSignConvention === "";
   const canSave =
     Boolean(preview?.importability.canSave) &&
     preview?.invalidRowCount === 0 &&
@@ -638,7 +639,7 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
                   </div>
                 )}
 
-                {requiresFeeChoice && (
+                {showFeeChoice && (
                   <div className="space-y-2">
                     <Label>{t("import.feeSign")}</Label>
                     <Select value={feeSignConvention} onValueChange={(value) => setFeeSignConvention((value ?? "") as FeeSignConvention)}>
