@@ -3,7 +3,7 @@ export const PERSISTENT_DATABASE_REQUIRED_CODE =
 
 export function hasPersistentDatabase(): boolean {
   const databaseUrl = (
-    process.env.DATABASE_URL ?? process.env.TURSO_DATABASE_URL
+    process.env.TURSO_DATABASE_URL ?? process.env.DATABASE_URL
   )?.trim();
   const isHostedDeployment = Boolean(
     process.env.VERCEL || process.env.VERCEL_ENV
