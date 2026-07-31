@@ -53,8 +53,10 @@ export default function CalendarPage() {
     setDataLoading(true);
     try {
       const [calRes, accRes] = await Promise.all([
-        fetch(`/api/analytics?type=calendar&year=${y}&month=${m}`),
-        fetch("/api/trading-account")
+        fetch(`/api/analytics?type=calendar&year=${y}&month=${m}`, {
+          cache: "no-store",
+        }),
+        fetch("/api/trading-account", { cache: "no-store" })
       ]);
 
       if (calRes.ok) setCalendarData(await calRes.json());

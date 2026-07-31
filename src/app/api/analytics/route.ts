@@ -21,6 +21,9 @@ import {
   type TradeRecord,
 } from "@/lib/analytics";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {

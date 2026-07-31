@@ -14,6 +14,10 @@ import {
   validateScreenshotExtraction,
   type ScreenshotTradeExtraction as TradeExtraction,
 } from "@/lib/screenshot-import";
+import {
+  getPersistentDatabaseError,
+  hasPersistentDatabase,
+} from "@/lib/database-persistence";
 
 /* ──────────────────────────────
    Constants & Limits
@@ -385,6 +389,10 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (!hasPersistentDatabase()) {
+    return NextResponse.json(getPersistentDatabaseError(), { status: 503 });
+  }
+
   try {
     const body = await request.json();
 
@@ -539,6 +547,10 @@ export async function PATCH(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!hasPersistentDatabase()) {
+    return NextResponse.json(getPersistentDatabaseError(), { status: 503 });
   }
 
   try {

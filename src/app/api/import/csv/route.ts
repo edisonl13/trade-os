@@ -21,6 +21,10 @@ import {
 } from "@/lib/import-confirmation";
 import { inferImportInterpretation } from "@/lib/import-interpretation";
 import {
+  getPersistentDatabaseError,
+  hasPersistentDatabase,
+} from "@/lib/database-persistence";
+import {
   classifySession,
   getHourInTz,
   getWeekdayInTz,
@@ -252,6 +256,10 @@ export async function POST(request: NextRequest) {
             feeSignConvention === "UNKNOWN",
         },
       });
+    }
+
+    if (!hasPersistentDatabase()) {
+      return NextResponse.json(getPersistentDatabaseError(), { status: 503 });
     }
 
     if (sourceKind === "ORDER_HISTORY_REQUIRES_LOT_MATCHING") {

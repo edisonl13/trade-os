@@ -14,8 +14,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const url = process.env.DATABASE_URL;
-const authToken = process.env.DATABASE_AUTH_TOKEN;
+const url = process.env.DATABASE_URL ?? process.env.TURSO_DATABASE_URL;
+const authToken =
+  process.env.DATABASE_AUTH_TOKEN ?? process.env.TURSO_AUTH_TOKEN;
 
 if (!url) {
   throw new Error("Missing DATABASE_URL.");

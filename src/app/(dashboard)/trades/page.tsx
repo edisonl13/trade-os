@@ -87,8 +87,8 @@ export default function TradesPage() {
       if (search) params.set("search", search);
 
       const [res, accountRes] = await Promise.all([
-        fetch(`/api/trades?${params}`),
-        fetch("/api/trading-account"),
+        fetch(`/api/trades?${params}`, { cache: "no-store" }),
+        fetch("/api/trading-account", { cache: "no-store" }),
       ]);
       const data = await res.json();
       if (res.ok) {

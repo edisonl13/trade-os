@@ -229,6 +229,8 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
         return t("import.feeConfirmationRequired");
       case "IMPORT_PREFLIGHT_FAILED":
         return t("import.preflightFailed");
+      case "PERSISTENT_DATABASE_REQUIRED":
+        return t("import.persistentDatabaseRequired");
       default:
         return data.error ?? t("import.transferFailed");
     }
@@ -416,7 +418,7 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
           </div>
           <div className="flex gap-3 w-full max-w-sm">
             <Button variant="outline" className="flex-1 border-white/5 font-black uppercase rounded-xl h-12" onClick={resetImport}>{t("import.reset")}</Button>
-            <Button className="flex-1 brand-gradient text-white font-black uppercase rounded-xl h-12 glow-primary" onClick={() => navRouter.push("/")}>{t("import.liveView")}</Button>
+            <Button className="flex-1 brand-gradient text-white font-black uppercase rounded-xl h-12 glow-primary" onClick={() => navRouter.push("/trades")}>{t("import.liveView")}</Button>
           </div>
         </div>
       </motion.div>
@@ -923,7 +925,9 @@ function ScreenshotImportTab() {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(
-          data.code === "SOURCE_TIMEZONE_REQUIRED"
+          data.code === "PERSISTENT_DATABASE_REQUIRED"
+            ? t("import.persistentDatabaseRequired")
+            : data.code === "SOURCE_TIMEZONE_REQUIRED"
             ? t("import.timezoneRequired")
             : data.code === "SCREENSHOT_PREFLIGHT_FAILED"
               ? t("import.completeRequiredFields")
@@ -947,7 +951,7 @@ function ScreenshotImportTab() {
          <h2 className="text-2xl font-black heading-sports">{t("import.saved")}</h2>
           <div className="flex gap-3">
             <Button variant="outline" className="h-14 px-8 font-black uppercase" onClick={resetScreenshotImport}>{t("import.importMore")}</Button>
-            <Button className="brand-gradient text-white font-black uppercase glow-primary px-10 h-14" onClick={() => router.push("/")}>{t("import.return")}</Button>
+            <Button className="brand-gradient text-white font-black uppercase glow-primary px-10 h-14" onClick={() => router.push("/trades")}>{t("import.liveView")}</Button>
           </div>
       </div>
     );

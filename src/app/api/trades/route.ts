@@ -5,6 +5,9 @@ import { trades, tradingAccounts } from "@/db/schema";
 import { eq, desc, and, like, gte, lte, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /* ──────────────────────────────
    Server-side validation
    ────────────────────────────── */
