@@ -16,7 +16,7 @@ export interface TradeRecord {
   actualExit: number | null;
   pnl: number | null;
   netPnl?: number | null;
-  pnlMode?: "GROSS" | "NET" | "UNKNOWN";
+  pnlMode?: "GROSS" | "NET" | "SOURCE_REPORTED" | "UNKNOWN";
   resultCurrency?: string | null;
   resultCurrencySource?: "SOURCE" | "ACCOUNT" | "USER_CONFIRMED" | "UNKNOWN";
   confirmedByUser?: boolean;

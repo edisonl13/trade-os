@@ -14,6 +14,7 @@ import {
   parseMt4HtmlReport,
 } from "../src/lib/import-file";
 import { getImportConfirmationError } from "../src/lib/import-confirmation";
+import { inferImportInterpretation } from "../src/lib/import-interpretation";
 import {
   getHourInTz,
   parseTimestampInTimezone,
@@ -106,6 +107,59 @@ assert.equal(
   ]),
   "mt4"
 );
+const fxReplayHeaders = [
+  "id",
+  "dateStart",
+  "dateEnd",
+  "pair",
+  "uPnL",
+  "rPnL",
+  "side",
+  "entryPrice",
+  "initalSL",
+  "maxTP",
+  "amount",
+  "amountClosed",
+  "status",
+  "initialBalance",
+  "currentRealizedBalance",
+];
+assert.equal(detectBroker(fxReplayHeaders), "fx-replay");
+const fxReplayMappings = autoMapColumns(fxReplayHeaders, "fx-replay");
+const fxReplayTrades = applyMapping(
+  [{
+    id: "FXR-1",
+    dateStart: "2026-07-28 10:00:00",
+    dateEnd: "2026-07-28 11:00:00",
+    pair: "OANDA:EUR_USD",
+    uPnL: "0",
+    rPnL: "125.50",
+    side: "buy",
+    entryPrice: "1.1000",
+    initalSL: "1.0950",
+    maxTP: "1.1100",
+    amount: "1",
+    amountClosed: "1",
+    status: "closed",
+    initialBalance: "10000",
+    currentRealizedBalance: "10125.50",
+  }],
+  fxReplayMappings,
+  "preview"
+);
+const fxReplayInterpretation = inferImportInterpretation({
+  headers: fxReplayHeaders,
+  fileFormat: "CSV",
+  detectedPlatform: "fx-replay",
+  mappings: fxReplayMappings,
+  trades: fxReplayTrades,
+});
+assert.equal(fxReplayInterpretation.sourceLabel, "FX Replay");
+assert.equal(fxReplayInterpretation.marketDataProvider, "OANDA");
+assert.equal(fxReplayInterpretation.pnlMode, "SOURCE_REPORTED");
+assert.equal(fxReplayInterpretation.feeDetailsAvailable, false);
+assert.equal(fxReplayInterpretation.requiresPnlConfirmation, false);
+assert.equal(fxReplayInterpretation.requiresFeeSignConfirmation, false);
 assert.equal(
   detectCsvSourceKind([
     "方向",
@@ -168,7 +222,6 @@ assert.equal(
 assert.equal(
   getImportConfirmationError({
     pnlMode: "UNKNOWN",
-    feesConfirmed: false,
     feeSignConvention: "UNKNOWN",
   })?.code,
   "PNL_MODE_REQUIRED"
@@ -176,23 +229,30 @@ assert.equal(
 assert.equal(
   getImportConfirmationError({
     pnlMode: "GROSS",
-    feesConfirmed: false,
-    feeSignConvention: "SIGNED",
+    hasFeeValues: true,
+    feeSignConvention: "UNKNOWN",
   })?.code,
   "FEE_CONFIRMATION_REQUIRED"
 );
 assert.equal(
   getImportConfirmationError({
     pnlMode: "GROSS",
-    feesConfirmed: true,
+    hasFeeValues: true,
     feeSignConvention: "SIGNED",
   }),
   null
 );
 assert.equal(
   getImportConfirmationError({
+    pnlMode: "GROSS",
+    hasFeeValues: false,
+    feeSignConvention: "UNKNOWN",
+  }),
+  null
+);
+assert.equal(
+  getImportConfirmationError({
     pnlMode: "NET",
-    feesConfirmed: false,
     feeSignConvention: "UNKNOWN",
   }),
   null

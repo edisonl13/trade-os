@@ -134,7 +134,9 @@ export const importBatches = sqliteTable("import_batch", {
   })
     .notNull()
     .default(false),
-  pnlMode: text("pnlMode", { enum: ["GROSS", "NET", "UNKNOWN"] })
+  pnlMode: text("pnlMode", {
+    enum: ["GROSS", "NET", "SOURCE_REPORTED", "UNKNOWN"],
+  })
     .notNull()
     .default("UNKNOWN"),
   feeSignConvention: text("feeSignConvention", {
@@ -212,7 +214,9 @@ export const trades = sqliteTable("trade", {
   pnl: real("pnl"),
   grossPnl: real("grossPnl"),
   netPnl: real("netPnl"),
-  pnlMode: text("pnlMode", { enum: ["GROSS", "NET", "UNKNOWN"] })
+  pnlMode: text("pnlMode", {
+    enum: ["GROSS", "NET", "SOURCE_REPORTED", "UNKNOWN"],
+  })
     .notNull()
     .default("UNKNOWN"),
   resultCurrency: text("resultCurrency"),

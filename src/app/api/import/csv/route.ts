@@ -19,6 +19,7 @@ import {
   type FeeSignConvention,
   type PnlMode,
 } from "@/lib/import-confirmation";
+import { inferImportInterpretation } from "@/lib/import-interpretation";
 import {
   classifySession,
   getHourInTz,
@@ -27,7 +28,7 @@ import {
   parseTimestampInTimezone,
 } from "@/lib/timezone";
 
-const IMPORT_ADAPTER_VERSION = "2026-07-28.1";
+const IMPORT_ADAPTER_VERSION = "2026-07-31.1";
 
 function timestampHasExplicitZone(value: string | null): boolean {
   if (!value) return false;
@@ -53,13 +54,14 @@ export async function POST(request: NextRequest) {
     const tradingAccountId = formData.get("tradingAccountId") as string | null;
     const requestedSourceTimezone = formData.get("sourceTimezone") as string | null;
     const requestedPnlMode = formData.get("pnlMode");
-    const pnlMode: PnlMode =
-      requestedPnlMode === "GROSS" || requestedPnlMode === "NET"
+    const userPnlMode: PnlMode =
+      requestedPnlMode === "GROSS" ||
+      requestedPnlMode === "NET" ||
+      requestedPnlMode === "SOURCE_REPORTED"
         ? requestedPnlMode
         : "UNKNOWN";
-    const feesConfirmed = formData.get("feesConfirmed") === "true";
     const requestedFeeSignConvention = formData.get("feeSignConvention");
-    const feeSignConvention: FeeSignConvention =
+    const userFeeSignConvention: FeeSignConvention =
       requestedFeeSignConvention === "SIGNED" ||
       requestedFeeSignConvention === "COSTS_POSITIVE"
         ? requestedFeeSignConvention
@@ -104,10 +106,31 @@ export async function POST(request: NextRequest) {
     } else {
       mappings = autoMapColumns(parsed.headers, detectedBroker);
     }
+    const interpretationTrades = applyMapping(
+      parsed.rows,
+      mappings,
+      "preview"
+    );
+    const interpretation = inferImportInterpretation({
+      headers: parsed.headers,
+      fileFormat: parsed.format,
+      detectedPlatform: detectedBroker,
+      mappings,
+      trades: interpretationTrades,
+    });
+    const pnlMode =
+      userPnlMode === "UNKNOWN" ? interpretation.pnlMode : userPnlMode;
+    const feeSignConvention =
+      userFeeSignConvention === "UNKNOWN"
+        ? interpretation.feeSignConvention
+        : userFeeSignConvention;
+    const feesConfirmed =
+      interpretation.hasFeeValues &&
+      feeSignConvention !== "UNKNOWN";
 
     // If this is a preview request, return parsed data without saving
     if (formData.get("preview") === "true") {
-      const previewTrades = applyMapping(parsed.rows, mappings, "preview");
+      const previewTrades = interpretationTrades;
       const hasNaiveTimestamps = previewTrades.some(
         (trade) =>
           (trade.tradedAt && !timestampHasExplicitZone(trade.tradedAt)) ||
@@ -166,17 +189,29 @@ export async function POST(request: NextRequest) {
         mappedSample: previewTrades.slice(0, 5),
         invalidRows: invalidRows.slice(0, 100),
         invalidRowCount: invalidRows.length,
-        detectedBroker,
+        detectedBroker: interpretation.sourcePlatform,
         fileFormat: parsed.format,
         sourceSummary: parsed.sourceSummary ?? null,
         sourceKind,
+        interpretation: {
+          ...interpretation,
+          pnlMode,
+          feeSignConvention,
+          requiresPnlConfirmation: pnlMode === "UNKNOWN",
+          requiresFeeSignConfirmation:
+            pnlMode === "GROSS" &&
+            interpretation.hasFeeValues &&
+            feeSignConvention === "UNKNOWN",
+        },
         sourceMetadata: {
           originalFileName: file.name,
           fileFormat: parsed.format,
           fileHash,
           fileSize: file.size,
-          sourcePlatform: detectedBroker,
-          platformDetection: detectedBroker ? "DETECTED" : "UNKNOWN",
+          sourcePlatform: interpretation.sourcePlatform,
+          platformDetection: interpretation.sourcePlatform
+            ? "DETECTED"
+            : "UNKNOWN",
           adapterVersion: IMPORT_ADAPTER_VERSION,
           reportedResultCurrencies,
           usesAccountCurrencyFallback: previewTrades.some(
@@ -212,7 +247,9 @@ export async function POST(request: NextRequest) {
             hasNaiveTimestamps && !validRequestedSourceTimezone,
           pnlMode: pnlMode === "UNKNOWN",
           feeSignConvention:
-            pnlMode === "GROSS" && feeSignConvention === "UNKNOWN",
+            pnlMode === "GROSS" &&
+            interpretation.hasFeeValues &&
+            feeSignConvention === "UNKNOWN",
         },
       });
     }
@@ -252,8 +289,8 @@ export async function POST(request: NextRequest) {
 
     const confirmationError = getImportConfirmationError({
       pnlMode,
-      feesConfirmed,
       feeSignConvention,
+      hasFeeValues: interpretation.hasFeeValues,
     });
     if (confirmationError) {
       return NextResponse.json(
@@ -439,8 +476,10 @@ export async function POST(request: NextRequest) {
       fileFormat: parsed.format,
       fileHash,
       fileSize: file.size,
-      sourcePlatform: detectedBroker,
-      platformDetection: detectedBroker ? "DETECTED" : "UNKNOWN",
+      sourcePlatform: interpretation.sourcePlatform,
+      platformDetection: interpretation.sourcePlatform
+        ? "DETECTED"
+        : "UNKNOWN",
       sourceKind,
       adapterVersion: IMPORT_ADAPTER_VERSION,
       sourceTimezone,
@@ -543,16 +582,19 @@ export async function POST(request: NextRequest) {
       const commission = toSignedAdjustment(mt.commission);
       const swap = toSignedAdjustment(mt.swap);
       const otherFees = toSignedAdjustment(mt.otherFees);
-      const signedAdjustments =
-        (commission ?? 0) + (swap ?? 0) + (otherFees ?? 0);
+      const hasFeeBreakdown =
+        commission !== null || swap !== null || otherFees !== null;
+      const signedAdjustments = hasFeeBreakdown
+        ? (commission ?? 0) + (swap ?? 0) + (otherFees ?? 0)
+        : null;
       const netPnl =
         mt.pnl === null
           ? null
-          : pnlMode === "NET"
+          : pnlMode === "NET" || pnlMode === "SOURCE_REPORTED"
             ? mt.pnl
             : pnlMode === "GROSS" &&
-                feesConfirmed &&
-                feeSignConvention !== "UNKNOWN"
+                feeSignConvention !== "UNKNOWN" &&
+                signedAdjustments !== null
               ? mt.pnl + signedAdjustments
               : null;
       const grossPnl = pnlMode === "GROSS" ? mt.pnl : null;

@@ -4,6 +4,16 @@ import { db } from "@/db";
 import { trades, tradingAccounts, tradeScreenshots } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import {
+  classifySession,
+  getHourInTz,
+  getWeekdayInTz,
+} from "@/lib/timezone";
+import {
+  preflightScreenshotTrades,
+  validateScreenshotExtraction,
+  type ScreenshotTradeExtraction as TradeExtraction,
+} from "@/lib/screenshot-import";
 
 /* ──────────────────────────────
    Constants & Limits
@@ -11,12 +21,12 @@ import { v4 as uuidv4 } from "uuid";
 
 const MAX_IMAGE_SIZE_MB = 10;
 const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
-const MAX_IMAGES_PER_REQUEST = 5;
+const MAX_IMAGES_PER_REQUEST = 1;
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/bmp"];
 
 // Rate limiting
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = 10;
+const MAX_REQUESTS_PER_WINDOW = 3;
 const rateLimitMap = new Map<string, { count: number; windowStart: number }>();
 
 function checkUploadRateLimit(userId: string): boolean {
@@ -35,87 +45,65 @@ function checkUploadRateLimit(userId: string): boolean {
 }
 
 /* ──────────────────────────────
-   Types
-   ────────────────────────────── */
-
-interface ExtractedField {
-  field: string;
-  value: string | number | null;
-  confidence: number;
-  source: "ai" | "user";
-}
-
-interface TradeExtraction {
-  symbol: string | null;
-  direction: "LONG" | "SHORT" | null;
-  entryPrice: number | null;
-  exitPrice: number | null;
-  stopLoss: number | null;
-  targetPrice: number | null;
-  positionSize: number | null;
-  pnl: number | null;
-  tradedAt: string | null;
-  fields: ExtractedField[];
-}
-
-const VALID_FIELDS = [
-  "symbol", "direction", "entryPrice", "exitPrice", "stopLoss",
-  "targetPrice", "positionSize", "pnl", "tradedAt",
-] as const;
-
-/**
- * Validate and sanitize AI-extracted trade data.
- */
-function validateExtraction(data: unknown): TradeExtraction[] {
-  if (!Array.isArray(data)) return [];
-
-  return data
-    .map((item: any, idx: number): TradeExtraction | null => {
-      if (!item || typeof item !== "object") return null;
-
-      const symbol = typeof item.symbol === "string" ? item.symbol.toUpperCase().trim().slice(0, 20) : null;
-      const direction = item.direction === "SHORT" ? "SHORT" : item.direction === "LONG" ? "LONG" : null;
-      const entryPrice = typeof item.entryPrice === "number" && isFinite(item.entryPrice) ? item.entryPrice : null;
-      const exitPrice = typeof item.exitPrice === "number" && isFinite(item.exitPrice) ? item.exitPrice : null;
-      const stopLoss = typeof item.stopLoss === "number" && isFinite(item.stopLoss) ? item.stopLoss : null;
-      const targetPrice = typeof item.targetPrice === "number" && isFinite(item.targetPrice) ? item.targetPrice : null;
-      const positionSize = typeof item.positionSize === "number" && isFinite(item.positionSize) ? item.positionSize : null;
-      const pnl = typeof item.pnl === "number" && isFinite(item.pnl) ? item.pnl : null;
-
-      let tradedAt: string | null = null;
-      if (typeof item.tradedAt === "string") {
-        const d = new Date(item.tradedAt);
-        if (!isNaN(d.getTime())) {
-          tradedAt = d.toISOString();
-        }
-      }
-
-      const fields: ExtractedField[] = [];
-      for (const field of VALID_FIELDS) {
-        if (item[field] !== undefined && item[field] !== null) {
-          fields.push({
-            field,
-            value: item[field],
-            confidence: typeof item.confidence === "number" ? Math.min(1, Math.max(0, item.confidence)) : 0.5,
-            source: "ai",
-          });
-        }
-      }
-
-      // Must have at least a symbol to be useful
-      if (!symbol) return null;
-
-      return { symbol, direction, entryPrice, exitPrice, stopLoss, targetPrice, positionSize, pnl, tradedAt, fields };
-    })
-    .filter((t): t is TradeExtraction => t !== null);
-}
-
-/* ──────────────────────────────
    Gemini API vision extraction
    ────────────────────────────── */
 
-const VISION_MODEL = "gemini-3.1-flash-lite";
-const MAX_VISION_OUTPUT_TOKENS = 4096;
+const VISION_MODEL = "gemini-3.5-flash-lite";
+const MAX_VISION_OUTPUT_TOKENS = 2048;
+const VISION_RESPONSE_SCHEMA = {
+  type: "array",
+  maxItems: 30,
+  items: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      symbol: {
+        type: ["string", "null"],
+        description: "Visible traded instrument or symbol.",
+      },
+      direction: {
+        type: ["string", "null"],
+        enum: ["LONG", "SHORT", null],
+      },
+      entryPrice: { type: ["number", "null"] },
+      exitPrice: { type: ["number", "null"] },
+      stopLoss: { type: ["number", "null"] },
+      targetPrice: { type: ["number", "null"] },
+      positionSize: { type: ["number", "null"] },
+      pnl: {
+        type: ["number", "null"],
+        description: "Visible realized result with its displayed sign.",
+      },
+      tradedAt: {
+        type: ["string", "null"],
+        description: "Visible trade timestamp as an ISO 8601 string when possible.",
+      },
+      confidence: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "Confidence that this visible row was transcribed correctly.",
+      },
+      evidence: {
+        type: "string",
+        description: "Short visible row or label text supporting the extraction. No hidden reasoning.",
+      },
+    },
+    required: [
+      "symbol",
+      "direction",
+      "entryPrice",
+      "exitPrice",
+      "stopLoss",
+      "targetPrice",
+      "positionSize",
+      "pnl",
+      "tradedAt",
+      "confidence",
+      "evidence",
+    ],
+  },
+} as const;
 
 class VisionExtractionError extends Error {
   constructor(
@@ -132,26 +120,16 @@ async function extractWithGemini(
   mimeType: string,
   apiKey: string,
 ): Promise<TradeExtraction[]> {
-  const prompt = `Extract ALL trade records from this trading screenshot.
-
-Return ONLY a valid JSON array. Each trade object:
-{
-  "symbol": "PAIR e.g. EURUSD",
-  "direction": "LONG or SHORT",
-  "entryPrice": number or null,
-  "exitPrice": number or null,
-  "stopLoss": number or null,
-  "targetPrice": number or null,
-  "positionSize": number or null,
-  "pnl": number or null,
-  "tradedAt": "ISO date string or null"
-}
+  const prompt = `Transcribe every clearly visible completed or open trade row from this screenshot.
 
 Rules:
-- Extract EVERY visible trade. Do not skip any.
-- If a field is not visible, use null. Never invent values.
-- Direction must be "LONG" or "SHORT".
-- Return only fields visible in the image.`;
+- Use only text and numbers visible in the image. Never infer missing values.
+- Preserve the displayed P&L sign.
+- Convert Buy/Sell to LONG/SHORT only when the row clearly states it.
+- If a field is not visible or ambiguous, return null.
+- confidence measures transcription certainty for the visible row.
+- evidence is a short visible row or label excerpt, not an explanation or hidden reasoning.
+- Do not include account balances, totals, headings, empty rows, or non-trade orders.`;
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`,
@@ -178,13 +156,18 @@ Rules:
       ],
       generationConfig: {
         maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
-        responseMimeType: "application/json",
+        responseFormat: {
+          text: {
+            mimeType: "application/json",
+            schema: VISION_RESPONSE_SCHEMA,
+          },
+        },
         thinkingConfig: {
           thinkingLevel: "minimal",
         },
       },
     }),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
@@ -215,21 +198,19 @@ Rules:
     ?.map((part: { text?: string }) => part.text ?? "")
     .join("") ?? "";
 
-  // Extract JSON array from response
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) {
+  if (!text.trim()) {
     throw new VisionExtractionError("No trade records found in the image", "NO_SIGNALS");
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(jsonMatch[0]);
+    parsed = JSON.parse(text);
   } catch {
     throw new VisionExtractionError("Vision provider returned invalid data", "VISION_UNAVAILABLE");
   }
 
   // Validate and sanitize
-  const validated = validateExtraction(parsed);
+  const validated = validateScreenshotExtraction(parsed);
   if (validated.length === 0) {
     throw new VisionExtractionError("No trade records found in the image", "NO_SIGNALS");
   }
@@ -447,25 +428,58 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    const tradedAtMs = body.tradedAt
-      ? new Date(body.tradedAt).getTime()
-      : Date.now();
-    const tradeDate = new Date(tradedAtMs);
-    const weekDay = tradeDate.getUTCDay();
-    const hour = tradeDate.getUTCHours();
-
-    let session_label = "other";
-    if (hour >= 0 && hour < 8) session_label = "asia";
-    else if (hour >= 8 && hour < 12) session_label = "london";
-    else if (hour >= 12 && hour < 16) session_label = "ny";
-    else if (hour >= 16 && hour < 21) session_label = "ny-after";
+    const requestedSourceTimezone =
+      typeof body.sourceTimezone === "string" ? body.sourceTimezone : "";
+    const preflight = preflightScreenshotTrades(
+      [body as Record<string, unknown>],
+      requestedSourceTimezone
+    );
+    if (preflight.errors.length > 0) {
+      const needsTimezone = preflight.errors.some(
+        (error) => error.error === "Source timezone required"
+      );
+      return NextResponse.json(
+        {
+          error: needsTimezone
+            ? "Source timezone is required for a trade time without a UTC offset."
+            : "Symbol, direction and a valid trade time are required.",
+          code: needsTimezone
+            ? "SOURCE_TIMEZONE_REQUIRED"
+            : "SCREENSHOT_PREFLIGHT_FAILED",
+          errors: preflight.errors,
+        },
+        { status: 400 }
+      );
+    }
+    const preparedTrade = preflight.trades[0];
+    const {
+      symbol,
+      direction,
+      sourceTimezone,
+      tradedAtMs,
+      entryPrice,
+      exitPrice,
+      stopLoss,
+      targetPrice,
+      positionSize,
+      pnl: reportedPnl,
+    } = preparedTrade;
+    const selectedAccount = await db.query.tradingAccounts.findFirst({
+      where: and(
+        eq(tradingAccounts.id, accountId!),
+        eq(tradingAccounts.userId, session.user.id)
+      ),
+    });
+    const accountTimezone = selectedAccount?.timezone ?? "UTC";
+    const weekDay = getWeekdayInTz(tradedAtMs, accountTimezone);
+    const sessionLabel = classifySession(getHourInTz(tradedAtMs, accountTimezone));
 
     const tradeId = uuidv4();
     // Only mark CLOSED if there's definitive exit evidence
     const status =
-      body.pnl !== undefined && body.pnl !== null
+      reportedPnl !== null
         ? "CLOSED"
-        : body.exitPrice !== undefined && body.exitPrice !== null
+        : exitPrice !== null
           ? "CLOSED"
           : "OPEN";
 
@@ -473,22 +487,30 @@ export async function PUT(request: NextRequest) {
       id: tradeId,
       userId: session.user.id,
       tradingAccountId: accountId!,
-      symbol: body.symbol?.toUpperCase() ?? "UNKNOWN",
-      direction: body.direction ?? "LONG",
-      entryPrice: body.entryPrice ?? null,
-      actualEntry: body.entryPrice ?? null,
-      actualExit: body.exitPrice ?? null,
-      stopLoss: body.stopLoss ?? null,
-      targetPrice: body.targetPrice ?? null,
-      positionSize: body.positionSize ?? null,
-      pnl: body.pnl ?? null,
-      fees: 0,
+      symbol,
+      direction,
+      entryPrice,
+      actualEntry: entryPrice,
+      actualExit: exitPrice,
+      stopLoss,
+      targetPrice,
+      positionSize,
+      pnl: reportedPnl,
+      grossPnl: null,
+      netPnl: reportedPnl,
+      pnlMode: reportedPnl === null ? "UNKNOWN" : "SOURCE_REPORTED",
+      resultCurrency: selectedAccount?.currency ?? null,
+      resultCurrencySource: selectedAccount?.currency ? "ACCOUNT" : "UNKNOWN",
+      fees: null,
       tradedAt: tradedAtMs,
       weekDay,
-      session: session_label,
+      session: sessionLabel,
+      sourceTimezone,
+      timezone: accountTimezone,
       notes: body.notes ?? null,
       status: status as "OPEN" | "CLOSED",
       source: "SCREENSHOT",
+      confirmedByUser: true,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -574,60 +596,73 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
+    const selectedAccount = await db.query.tradingAccounts.findFirst({
+      where: and(
+        eq(tradingAccounts.id, accountId!),
+        eq(tradingAccounts.userId, session.user.id)
+      ),
+    });
+    const accountTimezone = selectedAccount?.timezone ?? "UTC";
+    const requestedSourceTimezone =
+      typeof body.sourceTimezone === "string" ? body.sourceTimezone : "";
+    const preflight = preflightScreenshotTrades(
+      trades_data,
+      requestedSourceTimezone
+    );
+    if (preflight.errors.length > 0) {
+      return NextResponse.json(
+        {
+          error: "No trades were saved because required image fields need correction.",
+          code: "SCREENSHOT_PREFLIGHT_FAILED",
+          errors: preflight.errors,
+        },
+        { status: 422 }
+      );
+    }
+
     let saved = 0;
     const errors: { index: number; error: string }[] = [];
-
-    for (let i = 0; i < trades_data.length; i++) {
-      const t = trades_data[i];
+    const preparedTrades = preflight.trades;
+    for (let i = 0; i < preparedTrades.length; i++) {
+      const t = preparedTrades[i];
       try {
-        // Validate required fields
-        if (!t.symbol) {
-          errors.push({ index: i, error: "Missing symbol" });
-          continue;
-        }
-
-        const tradedAtMs = (t as { tradedAt?: string }).tradedAt
-          ? new Date((t as { tradedAt: string }).tradedAt).getTime()
-          : Date.now();
-        const tradeDate = new Date(tradedAtMs);
-        const weekDay = tradeDate.getUTCDay();
-        const hour = tradeDate.getUTCHours();
-
-        let session_label = "other";
-        if (hour >= 0 && hour < 8) session_label = "asia";
-        else if (hour >= 8 && hour < 12) session_label = "london";
-        else if (hour >= 12 && hour < 16) session_label = "ny";
-        else if (hour >= 16 && hour < 21) session_label = "ny-after";
-
         const tradeId = uuidv4();
-        const dir: "LONG" | "SHORT" =
-          (t.direction as string)?.toUpperCase() === "SHORT" ? "SHORT" : "LONG";
-        const st =
-          (t as { pnl?: number }).pnl !== undefined && (t as { pnl?: number }).pnl !== null
-            ? "CLOSED"
-            : (t as { exitPrice?: number }).exitPrice !== undefined && (t as { exitPrice?: number }).exitPrice !== null
-              ? "CLOSED"
-              : "OPEN";
+        const weekDay = getWeekdayInTz(t.tradedAtMs!, accountTimezone);
+        const sessionLabel = classifySession(
+          getHourInTz(t.tradedAtMs!, accountTimezone)
+        );
+        const status =
+          t.pnl !== null || t.exitPrice !== null ? "CLOSED" : "OPEN";
 
         await db.insert(trades).values({
           id: tradeId,
           userId: session.user.id,
           tradingAccountId: accountId!,
-          symbol: ((t.symbol as string) ?? "UNKNOWN").toUpperCase(),
-          direction: dir,
-          entryPrice: (t.entryPrice as number) ?? null,
-          actualEntry: (t.entryPrice as number) ?? null,
-          actualExit: (t.exitPrice as number) ?? null,
-          stopLoss: (t.stopLoss as number) ?? null,
-          targetPrice: (t.targetPrice as number) ?? null,
-          positionSize: (t.positionSize as number) ?? null,
-          pnl: (t.pnl as number) ?? null,
-          fees: 0,
-          tradedAt: tradedAtMs,
+          symbol: t.symbol,
+          direction: t.direction!,
+          entryPrice: t.entryPrice,
+          actualEntry: t.entryPrice,
+          actualExit: t.exitPrice,
+          stopLoss: t.stopLoss,
+          targetPrice: t.targetPrice,
+          positionSize: t.positionSize,
+          pnl: t.pnl,
+          grossPnl: null,
+          netPnl: t.pnl,
+          pnlMode: t.pnl === null ? "UNKNOWN" : "SOURCE_REPORTED",
+          resultCurrency: selectedAccount?.currency ?? null,
+          resultCurrencySource: selectedAccount?.currency
+            ? "ACCOUNT"
+            : "UNKNOWN",
+          fees: null,
+          tradedAt: t.tradedAtMs!,
           weekDay,
-          session: session_label,
-          status: st as "OPEN" | "CLOSED",
+          session: sessionLabel,
+          sourceTimezone: t.sourceTimezone,
+          timezone: accountTimezone,
+          status: status as "OPEN" | "CLOSED",
           source: "SCREENSHOT",
+          confirmedByUser: true,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         });

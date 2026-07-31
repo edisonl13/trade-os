@@ -158,6 +158,21 @@ export const BROKER_MAPPINGS: Record<string, Record<string, string>> = {
     "avgrishreward": "actualR",
     "maxriskreward": "actualR",
   },
+  "fx-replay": {
+    "id": "sourceTradeId",
+    "pair": "symbol",
+    "side": "direction",
+    "datestart": "tradedAt",
+    "dateend": "closedAt",
+    "entryprice": "entryPrice",
+    "initalsl": "stopLoss",
+    "maxtp": "targetPrice",
+    "amount": "positionSize",
+    "rpnl": "pnl",
+    "avgcloseprice": "exitPrice",
+    "avgrishreward": "actualR",
+    "maxriskreward": "actualR",
+  },
 };
 
 export const TRADE_FIELDS = [
@@ -209,6 +224,21 @@ export function parseCsv(csvContent: string): ParsedCsvResult {
  */
 export function detectBroker(headers: string[]): string | null {
   const headerSet = new Set(headers.map((h) => h.toLowerCase().trim()));
+
+  if (
+    [
+      "id",
+      "datestart",
+      "dateend",
+      "pair",
+      "upnl",
+      "rpnl",
+      "initialbalance",
+      "currentrealizedbalance",
+    ].every((header) => headerSet.has(header))
+  ) {
+    return "fx-replay";
+  }
 
   if (
     ["ticket", "open time", "type", "item", "close time", "taxes"].every(

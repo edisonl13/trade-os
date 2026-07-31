@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import {
   Upload,
   FileSpreadsheet,
@@ -55,25 +56,57 @@ interface ExtractionResult {
   positionSize: number | null;
   pnl: number | null;
   tradedAt: string | null;
+  confidence: number;
+  evidence: string;
   fields: ExtractedField[];
 }
 
-const FIELD_LABELS: Record<string, string> = {
-  symbol: "Symbol",
-  direction: "Side",
-  entryPrice: "Entry",
-  exitPrice: "Exit",
-  stopLoss: "SL",
-  targetPrice: "TP",
-  positionSize: "Size",
-  pnl: "P&L",
-  tradedAt: "Time",
-};
+type ScreenshotFieldKey =
+  | "symbol"
+  | "direction"
+  | "entryPrice"
+  | "exitPrice"
+  | "stopLoss"
+  | "targetPrice"
+  | "positionSize"
+  | "pnl"
+  | "tradedAt";
+
+interface EditableScreenshotTrade
+  extends Record<ScreenshotFieldKey, string> {
+  confidence: number;
+  evidence: string;
+}
+
+const SCREENSHOT_FIELD_KEYS: ScreenshotFieldKey[] = [
+  "symbol",
+  "direction",
+  "entryPrice",
+  "exitPrice",
+  "stopLoss",
+  "targetPrice",
+  "positionSize",
+  "pnl",
+  "tradedAt",
+];
+
+const SCREENSHOT_NUMERIC_FIELDS: ScreenshotFieldKey[] = [
+  "entryPrice",
+  "exitPrice",
+  "stopLoss",
+  "targetPrice",
+  "positionSize",
+  "pnl",
+];
+
+function screenshotTimestampHasZone(value: string): boolean {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim());
+}
 
 /* ============================================================
    CSV Import Tab
    ============================================================ */
-type PnlMode = "GROSS" | "NET" | "";
+type PnlMode = "GROSS" | "NET" | "SOURCE_REPORTED" | "";
 type FeeSignConvention = "SIGNED" | "COSTS_POSITIVE" | "";
 
 interface ImportPreview {
@@ -95,6 +128,24 @@ interface ImportPreview {
   mappings: { csvColumn: string; tradeField: string }[];
   invalidRows: { row: number; errors: string[] }[];
   invalidRowCount: number;
+  interpretation: {
+    sourcePlatform: string | null;
+    sourceLabel: string;
+    marketDataProvider: string | null;
+    pnlMode: "GROSS" | "NET" | "SOURCE_REPORTED" | "UNKNOWN";
+    feeSignConvention: "SIGNED" | "COSTS_POSITIVE" | "UNKNOWN";
+    resultBasis:
+      | "FX_REPLAY_REPORTED"
+      | "MT4_GROSS_WITH_FEES"
+      | "NET_COLUMN"
+      | "GROSS_COLUMN"
+      | "UNRESOLVED";
+    hasFeeFields: boolean;
+    hasFeeValues: boolean;
+    feeDetailsAvailable: boolean;
+    requiresPnlConfirmation: boolean;
+    requiresFeeSignConfirmation: boolean;
+  };
   requiredConfirmations: {
     sourceTimezone: boolean;
     pnlMode: boolean;
@@ -113,8 +164,6 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
   const [pnlMode, setPnlMode] = useState<PnlMode>("");
   const [feeSignConvention, setFeeSignConvention] =
     useState<FeeSignConvention>("");
-  const [feesConfirmed, setFeesConfirmed] = useState(false);
-  const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [result, setResult] = useState<{
     inserted: number;
     skipped: number;
@@ -122,7 +171,7 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
     importBatch?: string;
   } | null>(null);
 
-  const handleFileDrop = useCallback(async (f: File) => {
+  const handleFileDrop = async (f: File) => {
     const validTypes = [
       "text/csv",
       "text/html",
@@ -137,9 +186,23 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
     setSourceTimezone("");
     setPnlMode("");
     setFeeSignConvention("");
-    setFeesConfirmed(false);
-    setReviewConfirmed(false);
-  }, [t]);
+    setLoading(true);
+    const nextPreview = await requestPreview(f);
+    if (nextPreview) {
+      setPnlMode(
+        nextPreview.interpretation.pnlMode === "UNKNOWN"
+          ? ""
+          : nextPreview.interpretation.pnlMode
+      );
+      setFeeSignConvention(
+        nextPreview.interpretation.feeSignConvention === "UNKNOWN"
+          ? ""
+          : nextPreview.interpretation.feeSignConvention
+      );
+      setStep("mapping");
+    }
+    setLoading(false);
+  };
 
   const resetImport = () => {
     setFile(null);
@@ -148,8 +211,6 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
     setSourceTimezone("");
     setPnlMode("");
     setFeeSignConvention("");
-    setFeesConfirmed(false);
-    setReviewConfirmed(false);
   };
 
   const getApiErrorMessage = (data: { code?: string; error?: string }) => {
@@ -191,11 +252,14 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
     }
   };
 
-  const buildFormData = (previewOnly: boolean) => {
+  const buildFormData = (
+    previewOnly: boolean,
+    targetFile: File | null = file
+  ) => {
     const formData = new FormData();
-    if (file) formData.append("file", file);
+    if (targetFile) formData.append("file", targetFile);
     if (previewOnly) formData.append("preview", "true");
-    if (preview?.mappings) {
+    if (preview?.mappings && targetFile === file) {
       formData.append("mappings", JSON.stringify(preview.mappings));
     }
     if (sourceTimezone) formData.append("sourceTimezone", sourceTimezone);
@@ -203,16 +267,17 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
     if (feeSignConvention) {
       formData.append("feeSignConvention", feeSignConvention);
     }
-    formData.append("feesConfirmed", String(feesConfirmed));
     return formData;
   };
 
-  const requestPreview = async (): Promise<ImportPreview | null> => {
-    if (!file) return null;
+  const requestPreview = async (
+    targetFile: File | null = file
+  ): Promise<ImportPreview | null> => {
+    if (!targetFile) return null;
     try {
       const res = await fetch("/api/import/csv", {
         method: "POST",
-        body: buildFormData(true),
+        body: buildFormData(true, targetFile),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -233,10 +298,16 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
     setLoading(true);
     const nextPreview = await requestPreview();
     if (nextPreview) {
-      if (nextPreview.detectedBroker === "mt4") {
-        setPnlMode("GROSS");
-        setFeeSignConvention("SIGNED");
-      }
+      setPnlMode(
+        nextPreview.interpretation.pnlMode === "UNKNOWN"
+          ? ""
+          : nextPreview.interpretation.pnlMode
+      );
+      setFeeSignConvention(
+        nextPreview.interpretation.feeSignConvention === "UNKNOWN"
+          ? ""
+          : nextPreview.interpretation.feeSignConvention
+      );
       setStep("mapping");
     }
     setLoading(false);
@@ -292,15 +363,18 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
   };
 
   const requiresTimezone = preview?.requiredConfirmations.sourceTimezone ?? false;
-  const grossPnlReady =
-    pnlMode !== "GROSS" || (feesConfirmed && feeSignConvention !== "");
+  const requiresPnlChoice =
+    preview?.interpretation.requiresPnlConfirmation ?? true;
+  const requiresFeeChoice =
+    pnlMode === "GROSS" &&
+    Boolean(preview?.interpretation.hasFeeValues) &&
+    feeSignConvention === "";
   const canSave =
     Boolean(preview?.importability.canSave) &&
     preview?.invalidRowCount === 0 &&
     (!requiresTimezone || sourceTimezone !== "") &&
-    pnlMode !== "" &&
-    grossPnlReady &&
-    reviewConfirmed;
+    (!requiresPnlChoice || pnlMode !== "") &&
+    !requiresFeeChoice;
 
   const selectTriggerClass =
     "h-12 w-full rounded-xl border border-[#9AA8B8]/15 bg-[#101720] px-4 text-sm font-bold text-white hover:border-[#16D9FF]/35 focus-visible:border-[#16D9FF]/60 focus-visible:ring-[#16D9FF]/15";
@@ -399,22 +473,21 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
           <div className="fifa-card p-7 space-y-6">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#16D9FF]">
-                {t("import.reviewEyebrow")}
+                {t("import.smartCheckEyebrow")}
               </p>
               <h2 className="mt-2 text-2xl font-black heading-sports">
-                {t("import.reviewTitle")}
+                {t("import.smartCheckTitle")}
               </h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                {t("import.reviewDescription")}
+                {t("import.smartCheckDescription")}
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-3">
               {[
                 [t("import.detectedFormat"), preview.fileFormat],
-                [t("import.detectedBroker"), preview.detectedBroker ?? "—"],
+                [t("import.detectedSource"), preview.interpretation.sourceLabel],
                 [t("import.detectedRows"), String(preview.totalRows)],
-                [t("import.invalidRows"), String(preview.invalidRowCount)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border border-white/8 bg-white/[0.025] p-4">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -423,6 +496,53 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
                   <p className="mt-2 text-lg font-black text-white">{value}</p>
                 </div>
               ))}
+            </div>
+
+            <div className={cn(
+              "rounded-xl border p-5",
+              preview.invalidRowCount === 0
+                ? "border-[#20D785]/20 bg-[#20D785]/[0.055]"
+                : "border-[#F5B942]/25 bg-[#F5B942]/[0.055]"
+            )}>
+              <div className="flex items-start gap-3">
+                {preview.invalidRowCount === 0
+                  ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#20D785]" />
+                  : <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#F5B942]" />}
+                <div className="min-w-0">
+                  <p className="font-black text-white">{t("import.automaticInterpretation")}</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {preview.interpretation.resultBasis === "FX_REPLAY_REPORTED"
+                      ? t("import.fxReplayResultBasis")
+                      : preview.interpretation.resultBasis === "MT4_GROSS_WITH_FEES"
+                        ? t("import.mt4ResultBasis")
+                        : preview.interpretation.resultBasis === "NET_COLUMN"
+                          ? t("import.netResultDetected")
+                          : preview.interpretation.resultBasis === "GROSS_COLUMN"
+                            ? t("import.grossResultDetected")
+                            : t("import.resultNeedsOneAnswer")}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {preview.interpretation.feeDetailsAvailable
+                      ? t("import.feeDetailsDetected")
+                      : t("import.feeDetailsUnavailable")}
+                  </p>
+                  {preview.interpretation.marketDataProvider && (
+                    <p className="mt-2 text-xs font-bold text-[#16D9FF]">
+                      {t("import.marketDataProvider")}: {preview.interpretation.marketDataProvider}
+                    </p>
+                  )}
+                </div>
+                <Badge className={cn(
+                  "ml-auto shrink-0 border px-3 py-1 text-[9px] font-black uppercase",
+                  preview.invalidRowCount === 0
+                    ? "border-[#20D785]/20 bg-[#20D785]/10 text-[#20D785]"
+                    : "border-[#F5B942]/20 bg-[#F5B942]/10 text-[#F5B942]"
+                )}>
+                  {preview.invalidRowCount === 0
+                    ? t("import.readyToImport")
+                    : t("import.rowsNeedAttention", String(preview.invalidRowCount))}
+                </Badge>
+              </div>
             </div>
 
             {!preview.importability.canSave && (
@@ -465,13 +585,14 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
               </div>
             )}
 
-            <div className="grid gap-5 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>{t("import.sourceTimezone")}</Label>
-                {requiresTimezone ? (
-                  <Select value={sourceTimezone} onValueChange={(value) => setSourceTimezone(value ?? "")}>
-                    <SelectTrigger className={selectTriggerClass}>
-                      <SelectValue placeholder={t("import.selectTimezone")}>
+            {(requiresTimezone || requiresPnlChoice || requiresFeeChoice) && (
+              <div className="grid gap-5 md:grid-cols-2">
+                {requiresTimezone && (
+                  <div className="space-y-2">
+                    <Label>{t("import.timezoneQuestion")}</Label>
+                   <Select value={sourceTimezone} onValueChange={(value) => setSourceTimezone(value ?? "")}>
+                      <SelectTrigger className={selectTriggerClass}>
+                        <SelectValue placeholder={t("import.selectTimezone")}>
                         {sourceTimezone ? sourceTimezone.replaceAll("_", " ") : t("import.selectTimezone")}
                       </SelectValue>
                     </SelectTrigger>
@@ -481,79 +602,62 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
                           {timezone.replaceAll("_", " ")}
                         </SelectItem>
                       ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <div className="flex h-12 items-center rounded-xl border border-white/8 bg-white/[0.025] px-4 text-sm font-bold text-[#20D785]">
-                    {t("import.embeddedTimezone")}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-5 text-muted-foreground">{t("import.timezoneHelp")}</p>
                   </div>
                 )}
-                <p className="text-xs leading-5 text-muted-foreground">{t("import.timezoneHelp")}</p>
-              </div>
 
-              <div className="space-y-2">
-                <Label>{t("import.pnlBasis")}</Label>
-                <Select value={pnlMode} onValueChange={(value) => {
-                  const nextMode = (value ?? "") as PnlMode;
-                  setPnlMode(nextMode);
-                  if (nextMode !== "GROSS") {
-                    setFeeSignConvention("");
-                    setFeesConfirmed(false);
-                  }
-                }}>
-                  <SelectTrigger className={selectTriggerClass}>
-                    <SelectValue placeholder={t("import.selectPnlBasis")}>
-                      {pnlMode === "GROSS"
-                        ? t("import.grossPnl")
-                        : pnlMode === "NET"
-                          ? t("import.netPnl")
-                          : t("import.selectPnlBasis")}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent align="start" className={selectContentClass}>
-                    <SelectItem value="NET" className={selectItemClass}>{t("import.netPnl")}</SelectItem>
-                    <SelectItem value="GROSS" className={selectItemClass}>{t("import.grossPnl")}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs leading-5 text-muted-foreground">
-                  {pnlMode === "GROSS" ? t("import.grossPnlHelp") : t("import.netPnlHelp")}
-                </p>
-              </div>
-            </div>
+                {requiresPnlChoice && (
+                  <div className="space-y-2">
+                    <Label>{t("import.pnlBasis")}</Label>
+                    <Select value={pnlMode} onValueChange={(value) => {
+                      const nextMode = (value ?? "") as PnlMode;
+                      setPnlMode(nextMode);
+                      if (nextMode !== "GROSS") {
+                        setFeeSignConvention("");
+                      }
+                    }}>
+                      <SelectTrigger className={selectTriggerClass}>
+                        <SelectValue placeholder={t("import.selectPnlBasis")}>
+                          {pnlMode === "GROSS"
+                            ? t("import.grossPnl")
+                            : pnlMode === "NET"
+                              ? t("import.netPnl")
+                              : t("import.selectPnlBasis")}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent align="start" className={selectContentClass}>
+                        <SelectItem value="NET" className={selectItemClass}>{t("import.netPnl")}</SelectItem>
+                        <SelectItem value="GROSS" className={selectItemClass}>{t("import.grossPnl")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {pnlMode === "GROSS" ? t("import.grossPnlHelp") : t("import.netPnlHelp")}
+                    </p>
+                  </div>
+                )}
 
-            {pnlMode === "GROSS" && (
-              <div className="grid gap-5 rounded-xl border border-[#F5B942]/20 bg-[#F5B942]/5 p-5 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>{t("import.feeSign")}</Label>
-                  <Select value={feeSignConvention} onValueChange={(value) => setFeeSignConvention((value ?? "") as FeeSignConvention)}>
-                    <SelectTrigger className={selectTriggerClass}>
-                      <SelectValue placeholder={t("import.selectFeeSign")}>
-                        {feeSignConvention === "SIGNED"
-                          ? t("import.signedFees")
-                          : feeSignConvention === "COSTS_POSITIVE"
-                            ? t("import.positiveCosts")
-                            : t("import.selectFeeSign")}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="start" className={selectContentClass}>
-                      <SelectItem value="SIGNED" className={selectItemClass}>{t("import.signedFees")}</SelectItem>
-                      <SelectItem value="COSTS_POSITIVE" className={selectItemClass}>{t("import.positiveCosts")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setFeesConfirmed((current) => !current)}
-                  className={cn(
-                    "flex min-h-12 items-center gap-3 rounded-xl border px-4 text-left text-sm font-bold transition-colors",
-                    feesConfirmed
-                      ? "border-[#20D785]/35 bg-[#20D785]/8 text-[#20D785]"
-                      : "border-white/10 bg-black/10 text-muted-foreground"
-                  )}
-                >
-                  {feesConfirmed ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
-                  {t("import.feeConfirmed")}
-                </button>
+                {requiresFeeChoice && (
+                  <div className="space-y-2">
+                    <Label>{t("import.feeSign")}</Label>
+                    <Select value={feeSignConvention} onValueChange={(value) => setFeeSignConvention((value ?? "") as FeeSignConvention)}>
+                      <SelectTrigger className={selectTriggerClass}>
+                        <SelectValue placeholder={t("import.selectFeeSign")}>
+                          {feeSignConvention === "SIGNED"
+                            ? t("import.signedFees")
+                            : feeSignConvention === "COSTS_POSITIVE"
+                              ? t("import.positiveCosts")
+                              : t("import.selectFeeSign")}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent align="start" className={selectContentClass}>
+                        <SelectItem value="SIGNED" className={selectItemClass}>{t("import.signedFees")}</SelectItem>
+                        <SelectItem value="COSTS_POSITIVE" className={selectItemClass}>{t("import.positiveCosts")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             )}
 
@@ -574,20 +678,6 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => setReviewConfirmed((current) => !current)}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-xl border p-4 text-left text-sm font-bold transition-colors",
-                reviewConfirmed
-                  ? "border-[#16D9FF]/35 bg-[#16D9FF]/8 text-white"
-                  : "border-white/10 bg-white/[0.02] text-muted-foreground"
-              )}
-            >
-              {reviewConfirmed ? <CheckSquare className="h-5 w-5 text-[#16D9FF]" /> : <Square className="h-5 w-5" />}
-              {t("import.reviewConfirmed")}
-            </button>
-
             <div className="flex gap-4">
               <Button
                 variant="ghost"
@@ -605,7 +695,7 @@ function CsvImportTab({ router: navRouter }: { router: ReturnType<typeof useRout
               >
                 {loading
                   ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t("import.synchronizing")}</>
-                  : <><Save className="mr-2 h-5 w-5" /> {t("import.saveImport")}</>}
+                  : <><Save className="mr-2 h-5 w-5" /> {t("import.saveImportCount", String(preview.totalRows))}</>}
               </Button>
             </div>
           </div>
@@ -622,16 +712,50 @@ function ScreenshotImportTab() {
   const router = useRouter();
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const requestInFlightRef = useRef(false);
   const [step, setStep] = useState<ScreenshotStep>("upload");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [tradesList, setTradesList] = useState<Record<string, string>[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [tradesList, setTradesList] = useState<EditableScreenshotTrade[]>([]);
   const [checkedTrades, setCheckedTrades] = useState<Set<number>>(new Set());
+  const [sourceTimezone, setSourceTimezone] = useState("");
+
+  const fieldLabels: Record<ScreenshotFieldKey, string> = {
+    symbol: t("import.fieldSymbol"),
+    direction: t("import.fieldDirection"),
+    entryPrice: t("import.fieldEntry"),
+    exitPrice: t("import.fieldExit"),
+    stopLoss: t("import.fieldStopLoss"),
+    targetPrice: t("import.fieldTarget"),
+    positionSize: t("import.fieldSize"),
+    pnl: t("import.fieldPnl"),
+    tradedAt: t("import.fieldTime"),
+  };
+
+  const resetScreenshotImport = useCallback(() => {
+    setStep("upload");
+    setImagePreview(null);
+    setFileName("");
+    setTradesList([]);
+    setCheckedTrades(new Set());
+    setSourceTimezone("");
+    setLoading(false);
+    requestInFlightRef.current = false;
+  }, []);
 
   const handleImageFile = useCallback((file: File) => {
-    if (!file.type.startsWith("image/")) {
+    if (requestInFlightRef.current) {
+      toast.info(t("import.analysisAlreadyRunning"));
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp", "image/bmp"].includes(file.type)) {
       toast.error(t("import.invalidImage"));
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error(t("import.imageTooLarge"));
       return;
     }
 
@@ -639,6 +763,11 @@ function ScreenshotImportTab() {
     reader.onload = (e) => setImagePreview(e.target?.result as string);
     reader.readAsDataURL(file);
 
+    requestInFlightRef.current = true;
+    setFileName(file.name);
+    setTradesList([]);
+    setCheckedTrades(new Set());
+    setSourceTimezone("");
     setLoading(true);
     setStep("review");
 
@@ -667,13 +796,26 @@ function ScreenshotImportTab() {
           : (results?.flatMap((result) => result.trades ?? []) ?? []);
         if (extractedTrades.length === 0) throw new Error(t("import.noSignals"));
 
-        const fields = extractedTrades.map((trade) => {
-           const f: Record<string, string> = {};
-           Object.keys(FIELD_LABELS).forEach((key) => {
-             const value = trade[key as keyof ExtractionResult];
-             if (value !== undefined && value !== null && key !== "fields") f[key] = String(value);
-           });
-           return f;
+        const fields: EditableScreenshotTrade[] = extractedTrades.map((trade) => {
+          const editable = {
+            symbol: "",
+            direction: "",
+            entryPrice: "",
+            exitPrice: "",
+            stopLoss: "",
+            targetPrice: "",
+            positionSize: "",
+            pnl: "",
+            tradedAt: "",
+            confidence: trade.confidence ?? 0.5,
+            evidence: trade.evidence ?? "",
+          };
+          for (const key of SCREENSHOT_FIELD_KEYS) {
+            const value = trade[key];
+            editable[key] =
+              value === undefined || value === null ? "" : String(value);
+          }
+          return editable;
         });
 
         setTradesList(fields);
@@ -684,17 +826,21 @@ function ScreenshotImportTab() {
         toast.error(err instanceof Error ? err.message : t("error.generic"));
         setStep("upload");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        requestInFlightRef.current = false;
+      });
   }, [t]);
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
-      if (!items) return;
+      if (!items || requestInFlightRef.current) return;
       for (const item of Array.from(items)) {
         if (item.type.startsWith("image/")) {
           const file = item.getAsFile();
           if (file) handleImageFile(file);
+          break;
         }
       }
     };
@@ -702,32 +848,88 @@ function ScreenshotImportTab() {
     return () => window.removeEventListener("paste", handlePaste);
   }, [handleImageFile]);
 
+  const selectedIndexes = Array.from(checkedTrades).sort((a, b) => a - b);
+  const selectedTrades = selectedIndexes
+    .map((index) => tradesList[index])
+    .filter((trade): trade is EditableScreenshotTrade => Boolean(trade));
+  const needsSourceTimezone = selectedTrades.some(
+    (trade) => trade.tradedAt !== "" && !screenshotTimestampHasZone(trade.tradedAt)
+  );
+  const hasRequiredErrors = selectedTrades.some(
+    (trade) =>
+      !trade.symbol.trim() ||
+      !["LONG", "SHORT"].includes(trade.direction.toUpperCase()) ||
+      !trade.tradedAt.trim()
+  );
+  const hasInvalidNumericValues = selectedTrades.some((trade) =>
+    SCREENSHOT_NUMERIC_FIELDS.some(
+      (key) =>
+        trade[key].trim() !== "" && !Number.isFinite(Number(trade[key]))
+    )
+  );
+  const canSaveScreenshotTrades =
+    selectedTrades.length > 0 &&
+    !hasRequiredErrors &&
+    !hasInvalidNumericValues &&
+    (!needsSourceTimezone || sourceTimezone !== "");
+
+  const updateTradeField = (
+    index: number,
+    key: ScreenshotFieldKey,
+    value: string
+  ) => {
+    setTradesList((current) =>
+      current.map((trade, tradeIndex) =>
+        tradeIndex === index ? { ...trade, [key]: value } : trade
+      )
+    );
+  };
+
+  const parseOptionalNumber = (value: string): number | null => {
+    if (value.trim() === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
   const handleSaveAll = async () => {
+    if (!canSaveScreenshotTrades) {
+      toast.error(t("import.completeRequiredFields"));
+      return;
+    }
     setStep("saving");
     try {
-      const selected = Array.from(checkedTrades).map(i => {
-         const f = tradesList[i];
-         return {
-            symbol: f.symbol || "UNKNOWN",
-            direction: f.direction || "LONG",
-            entryPrice: f.entryPrice ? parseFloat(f.entryPrice) : null,
-            exitPrice: f.exitPrice ? parseFloat(f.exitPrice) : null,
-            stopLoss: f.stopLoss ? parseFloat(f.stopLoss) : null,
-            targetPrice: f.targetPrice ? parseFloat(f.targetPrice) : null,
-            positionSize: f.positionSize ? parseFloat(f.positionSize) : null,
-            pnl: f.pnl ? parseFloat(f.pnl) : null,
-            tradedAt: f.tradedAt || new Date().toISOString(),
-         };
-      });
+      const selected = selectedTrades.map((trade) => ({
+        symbol: trade.symbol.trim(),
+        direction: trade.direction.toUpperCase(),
+        entryPrice: parseOptionalNumber(trade.entryPrice),
+        exitPrice: parseOptionalNumber(trade.exitPrice),
+        stopLoss: parseOptionalNumber(trade.stopLoss),
+        targetPrice: parseOptionalNumber(trade.targetPrice),
+        positionSize: parseOptionalNumber(trade.positionSize),
+        pnl: parseOptionalNumber(trade.pnl),
+        tradedAt: trade.tradedAt.trim(),
+      }));
 
       const res = await fetch("/api/import/screenshot", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trades: selected }),
+        body: JSON.stringify({
+          trades: selected,
+          sourceTimezone: needsSourceTimezone ? sourceTimezone : undefined,
+        }),
       });
 
-      if (!res.ok) throw new Error(t("import.transferFailed"));
-      toast.success(t("import.saved"));
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          data.code === "SOURCE_TIMEZONE_REQUIRED"
+            ? t("import.timezoneRequired")
+            : data.code === "SCREENSHOT_PREFLIGHT_FAILED"
+              ? t("import.completeRequiredFields")
+              : t("import.transferFailed")
+        );
+      }
+      toast.success(t("import.savedCount", String(data.saved ?? selected.length)));
       setStep("done");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : t("error.generic"));
@@ -742,7 +944,10 @@ function ScreenshotImportTab() {
             <Zap className="h-10 w-10 text-[#06B6D4]" />
          </div>
          <h2 className="text-2xl font-black heading-sports">{t("import.saved")}</h2>
-         <Button className="brand-gradient text-white font-black uppercase glow-primary px-10 h-14" onClick={() => router.push("/")}>{t("import.return")}</Button>
+          <div className="flex gap-3">
+            <Button variant="outline" className="h-14 px-8 font-black uppercase" onClick={resetScreenshotImport}>{t("import.importMore")}</Button>
+            <Button className="brand-gradient text-white font-black uppercase glow-primary px-10 h-14" onClick={() => router.push("/")}>{t("import.return")}</Button>
+          </div>
       </div>
     );
   }
@@ -805,60 +1010,155 @@ function ScreenshotImportTab() {
             </p>
           </div>
         </div>
-      ) : loading ? (
-        <div className="fifa-card p-20 flex flex-col items-center justify-center gap-6">
-           <Loader2 className="h-12 w-12 animate-spin text-[#06B6D4]" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#06B6D4] animate-pulse">{t("import.analyzing")}</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-           <div className="space-y-4">
-              <Label className="label-sports ml-1">{t("import.source")}</Label>
-              <div className="fifa-card overflow-hidden p-2">
-                 <img src={imagePreview!} alt="Feed" className="w-full h-auto rounded-lg grayscale hover:grayscale-0 transition-all duration-500" />
-              </div>
+       ) : loading || step === "saving" ? (
+         <div className="fifa-card overflow-hidden">
+           {imagePreview && (
+             <div className="relative h-40 overflow-hidden border-b border-white/8 opacity-35">
+               <Image src={imagePreview} alt="" fill unoptimized className="object-cover" />
+             </div>
+           )}
+           <div className="p-16 flex flex-col items-center justify-center gap-6">
+             <Loader2 className="h-12 w-12 animate-spin text-[#06B6D4]" />
+             <p className="text-sm font-black text-white">
+               {step === "saving" ? t("import.savingVerifiedTrades") : t("import.analyzingVisibleData")}
+             </p>
+             <p className="max-w-lg text-center text-xs leading-5 text-muted-foreground">
+               {step === "saving" ? t("import.savingVerifiedHelp") : t("import.singleCallDisclosure")}
+             </p>
            </div>
+         </div>
+       ) : (
+         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="space-y-4">
+               <div className="flex items-center justify-between">
+                 <Label className="label-sports ml-1">{t("import.source")}</Label>
+                 <span className="max-w-[65%] truncate text-xs text-muted-foreground">{fileName}</span>
+               </div>
+               <div className="fifa-card overflow-hidden p-2">
+                  <Image
+                    src={imagePreview!}
+                    alt={t("import.uploadedScreenshot")}
+                    width={1600}
+                    height={900}
+                    unoptimized
+                    className="h-auto w-full rounded-lg"
+                  />
+               </div>
+               <div className="rounded-xl border border-[#16D9FF]/15 bg-[#16D9FF]/[0.045] p-4 text-xs leading-5 text-muted-foreground">
+                 <span className="font-black text-[#16D9FF]">{t("import.evidenceOnly")} </span>
+                 {t("import.evidenceOnlyHelp")}
+               </div>
+            </div>
 
-           <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                 <Label className="label-sports ml-1">{t("import.extracted")} ({tradesList.length})</Label>
+            <div className="space-y-6">
+               <div className="flex items-center justify-between">
+                  <Label className="label-sports ml-1">{t("import.extracted")} ({tradesList.length})</Label>
                  <Button variant="ghost" className="h-auto p-0 text-[10px] font-black uppercase text-[#06B6D4]" onClick={() => setCheckedTrades(new Set(tradesList.map((_, i) => i)))}>{t("import.selectAll")}</Button>
               </div>
 
-              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                 {tradesList.map((f, i) => (
-                   <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} key={i} className={cn("fifa-card p-4 space-y-4", !checkedTrades.has(i) && "opacity-40 grayscale")}>
-                      <div className="flex items-center justify-between">
-                         <div className="flex items-center gap-3">
-                            <button onClick={() => { const n = new Set(checkedTrades); if(n.has(i)) n.delete(i); else n.add(i); setCheckedTrades(n); }}>
-                               {checkedTrades.has(i) ? <CheckSquare className="h-5 w-5 text-[#3B82F6]" /> : <Square className="h-5 w-5 text-white/10" />}
-                            </button>
-                            <span className="font-black heading-sports text-sm">{f.symbol || "UNKNOWN"}</span>
-                            <Badge className={cn("text-[8px] font-black uppercase", f.direction === "SHORT" ? "bg-red-500/10 text-red-400" : "bg-[#22C55E]/10 text-[#22C55E]")}>{f.direction || "???"}</Badge>
+               {needsSourceTimezone && (
+                 <div className="space-y-2 rounded-xl border border-[#F5B942]/20 bg-[#F5B942]/[0.045] p-4">
+                   <Label>{t("import.timezoneQuestion")}</Label>
+                   <Select value={sourceTimezone} onValueChange={(value) => setSourceTimezone(value ?? "")}>
+                     <SelectTrigger className="h-11 border-white/10 bg-[#101720] text-white">
+                       <SelectValue placeholder={t("import.selectTimezone")}>
+                         {sourceTimezone ? sourceTimezone.replaceAll("_", " ") : t("import.selectTimezone")}
+                       </SelectValue>
+                     </SelectTrigger>
+                     <SelectContent className="max-h-72 border-[#16D9FF]/20 bg-[#0B1018] text-white">
+                       {COMMON_TIMEZONES.map((timezone) => (
+                         <SelectItem key={timezone} value={timezone}>
+                           {timezone.replaceAll("_", " ")}
+                         </SelectItem>
+                       ))}
+                     </SelectContent>
+                   </Select>
+                   <p className="text-xs text-muted-foreground">{t("import.screenshotTimezoneHelp")}</p>
+                 </div>
+               )}
+
+               <div className="space-y-4 max-h-[620px] overflow-y-auto pr-2 custom-scrollbar">
+                  {tradesList.map((f, i) => (
+                    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} key={i} className={cn("fifa-card p-5 space-y-4", !checkedTrades.has(i) && "opacity-45")}>
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                             <button type="button" aria-label={t("import.toggleTrade")} onClick={() => { const n = new Set(checkedTrades); if(n.has(i)) n.delete(i); else n.add(i); setCheckedTrades(n); }}>
+                                {checkedTrades.has(i) ? <CheckSquare className="h-5 w-5 text-[#3B82F6]" /> : <Square className="h-5 w-5 text-white/10" />}
+                             </button>
+                             <span className="font-black heading-sports text-sm">{f.symbol || t("import.needsReview")}</span>
+                             <Badge className={cn(
+                               "border text-[8px] font-black uppercase",
+                               f.confidence >= 0.8
+                                 ? "border-[#20D785]/20 bg-[#20D785]/10 text-[#20D785]"
+                                 : "border-[#F5B942]/20 bg-[#F5B942]/10 text-[#F5B942]"
+                             )}>
+                               {Math.round(f.confidence * 100)}% {t("import.confidence")}
+                             </Badge>
+                          </div>
+                          <span className="text-[10px] font-black text-white/25">#{i + 1}</span>
+                       </div>
+
+                       {f.evidence && (
+                         <div className="rounded-lg border border-white/7 bg-black/15 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                           <span className="font-black text-white/65">{t("import.visibleEvidence")}: </span>
+                           {f.evidence}
                          </div>
-                         <span className="text-[10px] font-black text-white/20">SIG-{String(i+1).padStart(2,'0')}</span>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 gap-3">
-                         {['entryPrice', 'exitPrice', 'pnl'].map(k => (
-                           <div key={k} className="space-y-1">
-                              <p className="text-[7px] font-black text-muted-foreground/40 uppercase tracking-widest">{FIELD_LABELS[k]}</p>
-                              <Input value={f[k] || ''} onChange={(e) => { const nl = [...tradesList]; nl[i][k] = e.target.value; setTradesList(nl); }} className="h-7 bg-white/5 border-white/5 rounded-md text-[10px] font-bold" />
-                           </div>
-                         ))}
-                      </div>
+                       )}
+
+                       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                          {SCREENSHOT_FIELD_KEYS.map((key) => (
+                            <div key={key} className={cn("space-y-1", key === "tradedAt" && "col-span-2 md:col-span-3")}>
+                               <p className="text-[9px] font-black text-muted-foreground uppercase tracking-wider">
+                                 {fieldLabels[key]}
+                                 {["symbol", "direction", "tradedAt"].includes(key) && <span className="ml-1 text-[#FF4D67]">*</span>}
+                               </p>
+                               {key === "direction" ? (
+                                 <Select value={f.direction || undefined} onValueChange={(value) => updateTradeField(i, "direction", value ?? "")}>
+                                   <SelectTrigger className={cn("h-9 bg-white/5 text-xs", !f.direction && "border-[#FF4D67]/45")}>
+                                     <SelectValue placeholder={t("import.selectDirection")} />
+                                   </SelectTrigger>
+                                   <SelectContent className="border-[#16D9FF]/20 bg-[#0B1018] text-white">
+                                     <SelectItem value="LONG">{t("import.directionLong")}</SelectItem>
+                                     <SelectItem value="SHORT">{t("import.directionShort")}</SelectItem>
+                                   </SelectContent>
+                                 </Select>
+                               ) : (
+                                 <Input
+                                   value={f[key]}
+                                   inputMode={SCREENSHOT_NUMERIC_FIELDS.includes(key) ? "decimal" : undefined}
+                                   onChange={(event) => updateTradeField(i, key, event.target.value)}
+                                   className={cn(
+                                     "h-9 bg-white/5 border-white/8 rounded-md text-xs font-bold",
+                                     ["symbol", "tradedAt"].includes(key) && !f[key].trim() && "border-[#FF4D67]/45",
+                                     SCREENSHOT_NUMERIC_FIELDS.includes(key) &&
+                                       f[key].trim() !== "" &&
+                                       !Number.isFinite(Number(f[key])) &&
+                                       "border-[#FF4D67]/65"
+                                   )}
+                                 />
+                               )}
+                            </div>
+                          ))}
+                       </div>
                    </motion.div>
                  ))}
               </div>
 
-              <div className="flex gap-4">
-                 <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={() => setStep("upload")}>{t("import.abort")}</Button>
-                 <Button className="h-14 flex-[2] brand-gradient text-white font-black uppercase glow-primary" onClick={handleSaveAll} disabled={checkedTrades.size === 0}>
-                    {t("import.save")} {checkedTrades.size} {t("import.signals")}
-                 </Button>
-              </div>
-           </div>
-        </div>
+               <div className="flex gap-4">
+                  <Button variant="ghost" className="h-14 flex-1 font-black uppercase text-muted-foreground" onClick={resetScreenshotImport}>{t("import.chooseAnotherImage")}</Button>
+                  <Button className="h-14 flex-[2] brand-gradient text-white font-black uppercase glow-primary" onClick={handleSaveAll} disabled={!canSaveScreenshotTrades}>
+                     {t("import.saveVerifiedCount", String(checkedTrades.size))}
+                  </Button>
+               </div>
+               {!canSaveScreenshotTrades && checkedTrades.size > 0 && (
+                 <p className="text-xs leading-5 text-[#F5B942]">
+                   {hasInvalidNumericValues
+                     ? t("import.invalidNumericFields")
+                     : t("import.completeRequiredFields")}
+                 </p>
+               )}
+            </div>
+         </div>
       )}
     </div>
   );

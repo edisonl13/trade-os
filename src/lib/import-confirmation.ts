@@ -1,4 +1,4 @@
-export type PnlMode = "GROSS" | "NET" | "UNKNOWN";
+export type PnlMode = "GROSS" | "NET" | "SOURCE_REPORTED" | "UNKNOWN";
 export type FeeSignConvention =
   | "SIGNED"
   | "COSTS_POSITIVE"
@@ -16,8 +16,8 @@ export type ImportConfirmationError =
 
 export function getImportConfirmationError(input: {
   pnlMode: PnlMode;
-  feesConfirmed: boolean;
   feeSignConvention: FeeSignConvention;
+  hasFeeValues?: boolean;
 }): ImportConfirmationError | null {
   if (input.pnlMode === "UNKNOWN") {
     return {
@@ -29,7 +29,8 @@ export function getImportConfirmationError(input: {
 
   if (
     input.pnlMode === "GROSS" &&
-    (!input.feesConfirmed || input.feeSignConvention === "UNKNOWN")
+    input.hasFeeValues !== false &&
+    input.feeSignConvention === "UNKNOWN"
   ) {
     return {
       code: "FEE_CONFIRMATION_REQUIRED",

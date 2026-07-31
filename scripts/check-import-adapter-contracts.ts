@@ -21,7 +21,7 @@ const contracts: ImportAdapterContractInput[] = [
     expectation: {
       fileFormat: "CSV",
       sourceKind: "TRADE_HISTORY",
-      sourcePlatform: "oanda",
+      sourcePlatform: "fx-replay",
       totalRows: 3,
       canSaveCompletedTrades: true,
       requiresSourceTimezone: true,
