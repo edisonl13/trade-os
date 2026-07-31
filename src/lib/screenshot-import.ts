@@ -180,10 +180,9 @@ export function preflightScreenshotTrades(
       typeof trade.direction === "string"
         ? trade.direction.toUpperCase()
         : "";
-    const direction =
-      directionValue === "LONG" || directionValue === "SHORT"
-        ? directionValue
-        : null;
+    let direction: PreparedScreenshotTrade["direction"] | null = null;
+    if (directionValue === "LONG") direction = "LONG";
+    if (directionValue === "SHORT") direction = "SHORT";
     const rawTradedAt =
       typeof trade.tradedAt === "string" ? trade.tradedAt.trim() : "";
 
