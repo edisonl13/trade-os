@@ -156,12 +156,8 @@ Rules:
       ],
       generationConfig: {
         maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
-        responseFormat: {
-          text: {
-            mimeType: "application/json",
-            schema: VISION_RESPONSE_SCHEMA,
-          },
-        },
+        responseMimeType: "application/json",
+        responseJsonSchema: VISION_RESPONSE_SCHEMA,
         thinkingConfig: {
           thinkingLevel: "minimal",
         },
